@@ -5,6 +5,7 @@ export interface Active {
   slug: string;
   node: AudioNode;
   gain: GainNode;
+  tick?: () => void;
 }
 
 export class AudioBus {
@@ -13,6 +14,7 @@ export class AudioBus {
   private active: Active | null = null;
   private factories = new Map<string, AudioFactory>();
   private ctxFactory: () => AudioContext;
+  private rafId = 0;
 
   constructor(ctxFactory: () => AudioContext = () => new AudioContext()) {
     this.ctxFactory = ctxFactory;
@@ -49,7 +51,8 @@ export class AudioBus {
     const ctx = this.ensureCtx();
     const master = this.master!;
 
-    const { node } = factory(ctx);
+    const result = factory(ctx);
+    const node = result.node;
     const gain = ctx.createGain();
     gain.gain.value = 0;
     node.connect(gain);
@@ -69,7 +72,8 @@ export class AudioBus {
       }, fadeMs + 50);
     }
 
-    this.active = { slug, node, gain };
+    this.active = { slug, node, gain, ...(result.tick ? { tick: result.tick } : {}) };
+    this.ensureLoop();
   }
 
   async deactivate(fadeMs = 600): Promise<void> {
@@ -83,6 +87,24 @@ export class AudioBus {
       try { a.node.disconnect(); a.gain.disconnect(); } catch { /* idempotent */ }
     }, fadeMs + 50);
     this.active = null;
+    this.stopLoop();
+  }
+
+  private ensureLoop(): void {
+    if (this.rafId !== 0) return;
+    const frame = (): void => {
+      if (!this.active) { this.rafId = 0; return; }
+      this.active.tick?.();
+      this.rafId = requestAnimationFrame(frame);
+    };
+    this.rafId = requestAnimationFrame(frame);
+  }
+
+  private stopLoop(): void {
+    if (this.rafId !== 0) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = 0;
+    }
   }
 }
 

@@ -393,6 +393,106 @@ export const mount: RoomMount = (canvas, opts) => {
   let mx = 0, my = 0;
   let simSpeed = 0.08;
 
+  // ── Pointer interaction (full quality only — preview is a card, drag conflicts) ──
+  const pointerCleanups: Array<() => void> = [];
+
+  if (opts.quality === 'full') {
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let dragStartMx = 0, dragStartMy = 0;
+    let simSpeedBase = simSpeed;
+
+    // Track active pointers for two-finger pinch
+    const activePointers = new Map<number, { x: number; y: number }>();
+
+    function onDragStart(cx: number, cy: number): void {
+      isDragging = true;
+      dragStartX = cx;
+      dragStartY = cy;
+      dragStartMx = mx;
+      dragStartMy = my;
+      simSpeedBase = simSpeed;
+    }
+
+    function onDragMove(cx: number, cy: number): void {
+      if (!isDragging) return;
+      const dx = (cx - dragStartX) / canvas.clientWidth;
+      const dy = (dragStartY - cy) / canvas.clientHeight;
+      mx = Math.max(-1, Math.min(1, dragStartMx + dx * 2.2));
+      my = Math.max(-1, Math.min(1, dragStartMy - (cy - dragStartY) / canvas.clientHeight * 2.2));
+      simSpeed = Math.max(0.02, Math.min(0.5, simSpeedBase + dy * 0.48));
+    }
+
+    function onPointerDown(e: PointerEvent): void {
+      canvas.setPointerCapture(e.pointerId);
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // Only start single-pointer drag when there's exactly one pointer
+      if (activePointers.size === 1) {
+        onDragStart(e.clientX, e.clientY);
+      } else {
+        // Second finger arrived — cancel single-finger drag
+        isDragging = false;
+      }
+    }
+
+    function onPointerMove(e: PointerEvent): void {
+      if (!activePointers.has(e.pointerId)) return;
+
+      if (activePointers.size === 2) {
+        // Two-finger pinch: adjust simSpeed by change in distance
+        const prev = activePointers.get(e.pointerId)!;
+        const ids = [...activePointers.keys()];
+        const otherId = ids.find(id => id !== e.pointerId)!;
+        const other = activePointers.get(otherId)!;
+
+        const prevDist = Math.hypot(prev.x - other.x, prev.y - other.y);
+        const newDist  = Math.hypot(e.clientX - other.x, e.clientY - other.y);
+        const delta = (newDist - prevDist) / canvas.clientHeight;
+        simSpeed = Math.max(0.02, Math.min(0.5, simSpeed + delta * 0.48));
+      } else if (activePointers.size === 1) {
+        onDragMove(e.clientX, e.clientY);
+      }
+
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    function onPointerUp(e: PointerEvent): void {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) {
+        isDragging = false;
+      }
+    }
+
+    function onPointerCancel(e: PointerEvent): void {
+      activePointers.delete(e.pointerId);
+      isDragging = false;
+    }
+
+    // Trackpad pinch (desktop) — ctrlKey is set by the browser for pinch gestures
+    function onWheel(e: WheelEvent): void {
+      if (e.ctrlKey) {
+        // Trackpad pinch: deltaY is negative when pinching out (zoom in)
+        e.preventDefault();
+        const delta = -e.deltaY / canvas.clientHeight;
+        simSpeed = Math.max(0.02, Math.min(0.5, simSpeed + delta * 0.48));
+      }
+    }
+
+    canvas.addEventListener('pointerdown',  onPointerDown);
+    canvas.addEventListener('pointermove',  onPointerMove);
+    canvas.addEventListener('pointerup',    onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerCancel);
+    canvas.addEventListener('wheel',        onWheel, { passive: false });
+
+    pointerCleanups.push(
+      () => canvas.removeEventListener('pointerdown',  onPointerDown),
+      () => canvas.removeEventListener('pointermove',  onPointerMove),
+      () => canvas.removeEventListener('pointerup',    onPointerUp),
+      () => canvas.removeEventListener('pointercancel', onPointerCancel),
+      () => canvas.removeEventListener('wheel',        onWheel),
+    );
+  }
+
   // ── Resize ──
   const stopResize = observeResize(canvas, () => {
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -627,6 +727,7 @@ export const mount: RoomMount = (canvas, opts) => {
 
   // ─── Teardown ──────────────────────────────────────────────────────────────
   return () => {
+    for (const cleanup of pointerCleanups) cleanup();
     ac.abort();
     loop.stop();
     stopResize();

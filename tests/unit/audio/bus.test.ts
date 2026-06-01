@@ -85,6 +85,19 @@ describe('AudioBus', () => {
     await new Promise(r => setTimeout(r, 200));
     expect(disconnectSpy).toHaveBeenCalled();
   });
+
+  it('calls active.tick on each animation frame', async () => {
+    const ticks: number[] = [];
+    bus.register('a', (ctx) => ({
+      node: (ctx as unknown as { createGain(): AudioNode }).createGain(),
+      tick: () => ticks.push(performance.now())
+    }));
+    await bus.activate('a', 0);
+    // Wait two frames
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r as FrameRequestCallback)));
+    expect(ticks.length).toBeGreaterThan(0);
+    await bus.deactivate(0);
+  });
 });
 
 describe('getAudioBus singleton', () => {

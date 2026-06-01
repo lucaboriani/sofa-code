@@ -4,7 +4,7 @@ import { compileShader, linkProgram, getUniforms } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
 import { createRafLoop } from '@/lib/webgl/raf';
 
-const WEB_COUNT = { preview: 4, full: 12 } as const;
+const WEB_COUNT = { preview: 20, full: 100 } as const;
 
 // ── Shader sources ────────────────────────────────────────────────────────────
 
