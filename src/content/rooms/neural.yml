@@ -3,7 +3,7 @@ title: Attività Neuronale
 subtitle: WebGL · 3D · Audio-reactive
 description: Audio-reactive synaptic network rendered in WebGL. Microphone-driven spike events propagate through a 3D neural graph.
 tags: [WebGL, Audio, Generative]
-year: 2025
+year: 2026
 accent: purple
 hasAudio: true
 order: 3

@@ -3,7 +3,7 @@ title: Tunnel
 subtitle: WebGL2 · Generative
 description: Endless pixel tunnel. Drag up and down to control velocity. WebGL2 fragment shader, single quad.
 tags: [WebGL2, Generative]
-year: 2025
+year: 2026
 accent: cyan
 hasAudio: true
 order: 1
