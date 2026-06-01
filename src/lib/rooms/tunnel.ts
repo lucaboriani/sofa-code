@@ -367,8 +367,8 @@ export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
     }
 
     // Pixel-readback driven line drones — visual line density → audio gain
-    lineGain.gain.setTargetAtTime(sharedState.floorBrightness * 0.8, now, 0.4);
-    ceilGain.gain.setTargetAtTime(sharedState.ceilingBrightness * 0.6, now, 0.4);
+    lineGain.gain.setTargetAtTime(sharedState.floorBrightness * 0.9, now, 0.2);
+    ceilGain.gain.setTargetAtTime(sharedState.ceilingBrightness * 0.7, now, 0.2);
   };
 
   return { node: masterGain, tick };
@@ -492,15 +492,24 @@ export const mount: RoomMount = (canvas, opts) => {
       gl.readPixels(0, c1, RW, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf, rowBytes * 4);
       gl.readPixels(0, c2, RW, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf, rowBytes * 5);
 
-      // Average green channel across 3 floor rows (offsets 0..rowBytes*3) and
-      // 3 ceiling rows (rowBytes*3..rowBytes*6). Cheap proxy for line density.
-      let floorSum = 0;
-      for (let i = 1; i < rowBytes * 3; i += 4) floorSum += pixelBuf[i];
-      let ceilSum = 0;
-      for (let i = rowBytes * 3 + 1; i < rowBytes * 6; i += 4) ceilSum += pixelBuf[i];
+      // Count BRIGHT pixels above a threshold across 3 floor rows and 3 ceiling
+      // rows. Dark tile fill is ~5–18, perspective grid/curve lines are ~40–120
+      // — threshold at 35 isolates the lines from the floor. Average brightness
+      // (used previously) stays near-zero even when curves are clearly visible
+      // because the bright pixels are sparse.
       const totalPx = (rowBytes / 4) * 3;
-      sharedState.floorBrightness = floorSum / (totalPx * 255);
-      sharedState.ceilingBrightness = ceilSum / (totalPx * 255);
+      let floorBright = 0;
+      for (let i = 0; i < rowBytes * 3; i += 4) {
+        if (pixelBuf[i] > 35) floorBright++;
+      }
+      let ceilBright = 0;
+      for (let i = rowBytes * 3; i < rowBytes * 6; i += 4) {
+        if (pixelBuf[i] > 35) ceilBright++;
+      }
+      // 8% line coverage on floor → full intensity (matches original); ceiling
+      // lines are typically denser so normalise to 15%.
+      sharedState.floorBrightness = Math.min(1, floorBright / totalPx / 0.08);
+      sharedState.ceilingBrightness = Math.min(1, ceilBright / totalPx / 0.15);
     }
   }, ac.signal);
 
