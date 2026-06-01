@@ -10,6 +10,12 @@ body {
   max-width: 100vw;
 }
 
+/* Room pages are full-bleed canvases — kill pull-to-refresh and scroll
+   chaining so dragging up/down on mobile can't reload the page. */
+html:has(body.room-body), body.room-body {
+  overscroll-behavior: none;
+}
+
 body::before {
   content: '';
   position: fixed;

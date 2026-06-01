@@ -61,7 +61,7 @@ const { title, active = 'home', chrome = 'site' } = Astro.props;
     w[detachKey] = wireTransitions(bus, resolveSlug, resolveHasAudio);
   </script>
 </head>
-<body>
+<body class={chrome === 'minimal' ? 'room-body' : undefined}>
   {chrome === 'site' && <Nav active={active} />}
   <slot />
   {chrome === 'site' && <Footer />}
