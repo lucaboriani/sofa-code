@@ -4,7 +4,6 @@ import { decide, type ReconcilerInput } from '@/lib/preview/reconciler';
 const base: ReconcilerInput = {
   inViewport: false,
   reducedMotion: false,
-  smallScreen: false,
   currentState: 'idle'
 };
 
@@ -19,10 +18,6 @@ describe('decide', () => {
 
   it('does not mount when reducedMotion', () => {
     expect(decide({ ...base, inViewport: true, reducedMotion: true })).toBe('noop');
-  });
-
-  it('does not mount when smallScreen', () => {
-    expect(decide({ ...base, inViewport: true, smallScreen: true })).toBe('noop');
   });
 
   it('does not mount when already running', () => {

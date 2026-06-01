@@ -21,7 +21,6 @@ function init(): void {
   if (!canvases.length) return;
 
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const smallScreen = matchMedia('(max-width: 640px)').matches;
 
   canvases.forEach(canvas => {
     const slugAttr = canvas.dataset.roomPreview ?? '';
@@ -37,7 +36,7 @@ function init(): void {
     let mountInFlight = false;
 
     const reconcile = async (): Promise<void> => {
-      const input: ReconcilerInput = { inViewport, reducedMotion, smallScreen, currentState: state };
+      const input: ReconcilerInput = { inViewport, reducedMotion, currentState: state };
       const action = decide(input);
       if (action === 'mount' && !mountInFlight) {
         mountInFlight = true;
