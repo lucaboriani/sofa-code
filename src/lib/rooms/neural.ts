@@ -829,15 +829,19 @@ export const mount: RoomMount = (canvas, opts) => {
     }
   }, ac.signal);
 
-  loop.start();
+  if (!opts.startPaused) loop.start();
 
   // ─── Teardown ──────────────────────────────────────────────────────────────
-  return () => {
-    for (const cleanup of pointerCleanups) cleanup();
-    ac.abort();
-    loop.stop();
-    stopResize();
-    try { gl.deleteProgram(progLine); } catch { /* idempotent */ }
-    try { gl.deleteProgram(progPt);   } catch { /* idempotent */ }
+  return {
+    teardown: (): void => {
+      for (const cleanup of pointerCleanups) cleanup();
+      ac.abort();
+      loop.stop();
+      stopResize();
+      try { gl.deleteProgram(progLine); } catch { /* idempotent */ }
+      try { gl.deleteProgram(progPt);   } catch { /* idempotent */ }
+    },
+    pause: (): void => loop.stop(),
+    resume: (): void => loop.start()
   };
 };

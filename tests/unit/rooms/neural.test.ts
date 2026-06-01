@@ -31,7 +31,7 @@ describe('neural', () => {
     const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
     const canvas = makeCanvas();
     const td = mount(canvas, { quality: 'preview', audio: false });
-    expect(() => td()).not.toThrow();
+    expect(() => td.teardown()).not.toThrow();
     expect(cancelSpy).toHaveBeenCalled();
     cancelSpy.mockRestore();
   });

@@ -858,17 +858,21 @@ export const mount: RoomMount = (canvas, opts) => {
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }, ac.signal);
 
-    loop.start();
+    if (!opts.startPaused) loop.start();
 
-    return () => {
-      ac.abort();
-      loop.stop();
-      stopResize();
-      for (const cleanup of listenerCleanups) cleanup();
-      try { gl.deleteProgram(strandProg); } catch { /* idempotent */ }
-      try { gl.deleteProgram(blurHP); } catch { /* idempotent */ }
-      try { gl.deleteProgram(blurVP); } catch { /* idempotent */ }
-      try { gl.deleteProgram(compP); } catch { /* idempotent */ }
+    return {
+      teardown: (): void => {
+        ac.abort();
+        loop.stop();
+        stopResize();
+        for (const cleanup of listenerCleanups) cleanup();
+        try { gl.deleteProgram(strandProg); } catch { /* idempotent */ }
+        try { gl.deleteProgram(blurHP); } catch { /* idempotent */ }
+        try { gl.deleteProgram(blurVP); } catch { /* idempotent */ }
+        try { gl.deleteProgram(compP); } catch { /* idempotent */ }
+      },
+      pause: (): void => loop.stop(),
+      resume: (): void => loop.start()
     };
   }
 
@@ -910,15 +914,19 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }, ac.signal);
 
-  loop.start();
+  if (!opts.startPaused) loop.start();
 
-  return () => {
-    ac.abort();
-    loop.stop();
-    stopResize();
-    try { gl.deleteProgram(strandProg); } catch { /* idempotent */ }
-    try { gl.deleteProgram(blurHP); } catch { /* idempotent */ }
-    try { gl.deleteProgram(blurVP); } catch { /* idempotent */ }
-    try { gl.deleteProgram(compP); } catch { /* idempotent */ }
+  return {
+    teardown: (): void => {
+      ac.abort();
+      loop.stop();
+      stopResize();
+      try { gl.deleteProgram(strandProg); } catch { /* idempotent */ }
+      try { gl.deleteProgram(blurHP); } catch { /* idempotent */ }
+      try { gl.deleteProgram(blurVP); } catch { /* idempotent */ }
+      try { gl.deleteProgram(compP); } catch { /* idempotent */ }
+    },
+    pause: (): void => loop.stop(),
+    resume: (): void => loop.start()
   };
 };

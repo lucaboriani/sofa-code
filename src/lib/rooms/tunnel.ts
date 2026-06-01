@@ -480,17 +480,21 @@ export const mount: RoomMount = (canvas, opts) => {
     }
   }, ac.signal);
 
-  loop.start();
+  if (!opts.startPaused) loop.start();
 
   // ── Teardown ───────────────────────────────────────────────────────────────
-  return () => {
-    ac.abort();
-    loop.stop();
-    stopResize();
-    canvas.removeEventListener('pointerdown', onDown);
-    canvas.removeEventListener('pointermove', onMove);
-    canvas.removeEventListener('pointerup', onUp);
-    canvas.removeEventListener('pointercancel', onUp);
-    try { gl.deleteProgram(program); } catch { /* idempotent */ }
+  return {
+    teardown: (): void => {
+      ac.abort();
+      loop.stop();
+      stopResize();
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointercancel', onUp);
+      try { gl.deleteProgram(program); } catch { /* idempotent */ }
+    },
+    pause: (): void => loop.stop(),
+    resume: (): void => loop.start()
   };
 };

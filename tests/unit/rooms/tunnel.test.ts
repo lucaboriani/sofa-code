@@ -29,8 +29,8 @@ describe('tunnel.mount', () => {
   it('returns a teardown function that does not throw', () => {
     const canvas = makeCanvas();
     const td = mount(canvas, { quality: 'preview', audio: false });
-    expect(typeof td).toBe('function');
-    expect(() => td()).not.toThrow();
+    expect(typeof td.teardown).toBe("function");
+    expect(() => td.teardown()).not.toThrow();
   });
 
   it('teardown cancels rAF and removes pointer listeners', () => {
@@ -38,7 +38,7 @@ describe('tunnel.mount', () => {
     const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
     const removeSpy = vi.spyOn(canvas, 'removeEventListener');
     const td = mount(canvas, { quality: 'full', audio: false });
-    td();
+    td.teardown();
     expect(cancelSpy).toHaveBeenCalled();
     expect(removeSpy).toHaveBeenCalled();
     cancelSpy.mockRestore();

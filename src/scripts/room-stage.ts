@@ -1,10 +1,10 @@
 import { rooms, type RoomSlug } from '@/lib/rooms/registry';
 import { getAudioBus } from '@/lib/audio/bus';
-import type { RoomTeardown } from '@/lib/webgl/types';
+import type { RoomHandle } from '@/lib/webgl/types';
 
 const isRoomSlug = (s: string): s is RoomSlug => s === 'neural' || s === 'tunnel' || s === 'swarm';
 
-let activeTeardown: RoomTeardown | null = null;
+let activeHandle: RoomHandle | null = null;
 
 async function mountCurrent(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>('[data-room-stage]');
@@ -15,7 +15,7 @@ async function mountCurrent(): Promise<void> {
   const hasAudio = canvas.dataset.hasAudio === 'true';
 
   const mod = await rooms[slug]();
-  activeTeardown = mod.mount(canvas, { quality: 'full', audio: hasAudio });
+  activeHandle = mod.mount(canvas, { quality: 'full', audio: hasAudio });
 
   if (hasAudio && mod.createAudio) {
     const bus = getAudioBus();
@@ -33,9 +33,9 @@ async function mountCurrent(): Promise<void> {
 }
 
 function teardownCurrent(): void {
-  if (activeTeardown) {
-    activeTeardown();
-    activeTeardown = null;
+  if (activeHandle) {
+    activeHandle.teardown();
+    activeHandle = null;
   }
 }
 
