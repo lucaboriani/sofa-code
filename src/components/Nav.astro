@@ -1,0 +1,14 @@
+---
+interface Props {
+  active?: 'home' | 'about';
+}
+const { active = 'home' } = Astro.props;
+---
+<nav>
+  <a href="/" class="nav-logo">SOFA<span>/</span>WORKS</a>
+  <ul class="nav-links">
+    <li><a href="/" class:list={[active === 'home' && 'is-active']}>Index</a></li>
+    <li><a href="/about" class:list={[active === 'about' && 'is-active']}>About</a></li>
+  </ul>
+  <div class="nav-badge">Vibe-coded · 2025</div>
+</nav>

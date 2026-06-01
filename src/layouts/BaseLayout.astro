@@ -1,0 +1,31 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import Nav from '@/components/Nav.astro';
+import Footer from '@/components/Footer.astro';
+import '@/styles/tokens.css';
+import '@/styles/global.css';
+import '@/styles/gallery.css';
+
+interface Props {
+  title: string;
+  active?: 'home' | 'about';
+}
+const { title, active = 'home' } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
+  <ClientRouter />
+</head>
+<body>
+  <Nav active={active} />
+  <slot />
+  <Footer />
+</body>
+</html>
