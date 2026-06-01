@@ -1,5 +1,4 @@
 ---
-import CardVisual from './CardVisual.astro';
 import RoomCanvasPreview from './RoomCanvasPreview.astro';
 
 interface Props {
@@ -10,17 +9,15 @@ interface Props {
   tags: string[];
   year: number;
   accent: 'cyan' | 'purple' | 'red';
-  cardVisual: 'nodes' | 'grid' | 'map';
   span?: 'wide' | 'narrow' | 'third' | 'half' | 'full';
 }
-const { slug, num, title, description, tags, year, accent, cardVisual, span = 'third' } = Astro.props;
+const { slug, num, title, description, tags, year, accent, span = 'third' } = Astro.props;
 const tagClass = (i: number): string => i === 0 ? `tag t-${accent}` : 'tag';
 ---
 <article class={`project-card card-${span}`} data-room-card={slug}>
   <div class="card-glow"></div>
   <div class="card-num">{num}</div>
   <div class="card-visual">
-    <CardVisual kind={cardVisual} />
     <RoomCanvasPreview slug={slug} />
   </div>
   <div class="card-tags">

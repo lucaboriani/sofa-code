@@ -9,6 +9,5 @@ export const roomSchema = z.object({
   year: z.number().int(),
   accent: z.enum(['cyan', 'purple', 'red']),
   hasAudio: z.boolean(),
-  cardVisual: z.enum(['nodes', 'grid', 'map']),
   order: z.number().int()
 });

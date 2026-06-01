@@ -19,13 +19,12 @@ function init(): void {
     if (!card) return;
 
     let inViewport = false;
-    let hovered = false;
     let state: 'idle' | 'running' = 'idle';
     let teardown: RoomTeardown | null = null;
     let mountInFlight = false;
 
     const reconcile = async (): Promise<void> => {
-      const input: ReconcilerInput = { inViewport, hovered, reducedMotion, smallScreen, currentState: state };
+      const input: ReconcilerInput = { inViewport, reducedMotion, smallScreen, currentState: state };
       const action = decide(input);
       if (action === 'mount' && !mountInFlight) {
         mountInFlight = true;
@@ -50,13 +49,6 @@ function init(): void {
       }
     }, { rootMargin: '200px', threshold: 0.1 });
     io.observe(card);
-
-    const onEnter = (): void => { hovered = true; void reconcile(); };
-    const onLeave = (): void => { hovered = false; void reconcile(); };
-    card.addEventListener('pointerenter', onEnter);
-    card.addEventListener('pointerleave', onLeave);
-    card.addEventListener('focusin', onEnter);
-    card.addEventListener('focusout', onLeave);
   });
 }
 
