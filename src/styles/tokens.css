@@ -1,0 +1,15 @@
+:root {
+  --bg: #080b10;
+  --surface: #0d1117;
+  --surface2: #131920;
+  --border: rgba(255,255,255,0.06);
+  --border-bright: rgba(255,255,255,0.12);
+  --accent: #00e5ff;
+  --accent2: #7b61ff;
+  --accent3: #ff4d6d;
+  --text: #e2e8f0;
+  --text-dim: #5a6a7a;
+  --text-mid: #8899aa;
+  --mono: 'DM Mono', monospace;
+  --sans: 'Syne', sans-serif;
+}
