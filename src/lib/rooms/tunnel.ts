@@ -198,7 +198,11 @@ export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
   osc1.start(); osc2.start(); osc3.start();
 
   // ── Kick bus (impulses on tile crossings) ────────────────────────────────────
-  const kickOut = ctx.createGain(); kickOut.gain.value = 0.5;
+  // kickOut compensates for the post-masterGain attenuation (~0.15 at steady
+  // state) so the kick lands near the original loudness (which routed direct
+  // to destination at gain 1.0). Routing through masterGain keeps the bus
+  // crossfade working — kicks fade out cleanly on navigation.
+  const kickOut = ctx.createGain(); kickOut.gain.value = 4.0;
   kickOut.connect(masterGain);
 
   const TILE_JS = 1.5;
