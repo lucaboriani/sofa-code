@@ -551,9 +551,10 @@ export const mount: RoomMount = (canvas, opts) => {
   // ── Web pool ─────────────────────────────────────────────────────────────
 
   function makeWeb(init: boolean): WebInstance {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     const cx = rand(W * 0.08, W * 0.92);
     const cy = rand(H * 0.08, H * 0.92);
-    const r  = rand(55, 185);
+    const r  = rand(55, 185) * dpr;
     const hue = rand(0, 1);
     const targetAlpha = rand(0.12, 0.48);
     const baker = BAKERS[Math.floor(Math.random() * BAKERS.length)];
@@ -579,9 +580,10 @@ export const mount: RoomMount = (canvas, opts) => {
   }
 
   function resetWeb(web: WebInstance): void {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     web.cx = rand(W * 0.08, W * 0.92);
     web.cy = rand(H * 0.08, H * 0.92);
-    web.r  = rand(55, 185);
+    web.r  = rand(55, 185) * dpr;
     web.angle = rand(0, Math.PI * 2);
     web.spin  = rand(-0.001, 0.001);
     web.alpha = 0.0;
@@ -696,7 +698,9 @@ export const mount: RoomMount = (canvas, opts) => {
 
     function pointerCoords(e: PointerEvent): { x: number; y: number } {
       const rect = canvas.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const sx = canvas.width / (rect.width || 1);
+      const sy = canvas.height / (rect.height || 1);
+      return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
     }
 
     function pinchDistMid(a: { x: number; y: number }, b: { x: number; y: number }): { dist: number; cx: number; cy: number } {
@@ -752,8 +756,10 @@ export const mount: RoomMount = (canvas, opts) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      pinch.cx = e.clientX - rect.left;
-      pinch.cy = e.clientY - rect.top;
+      const sx = canvas.width / (rect.width || 1);
+      const sy = canvas.height / (rect.height || 1);
+      pinch.cx = (e.clientX - rect.left) * sx;
+      pinch.cy = (e.clientY - rect.top) * sy;
       // Normalise deltaY: typical trackpad fires ~3–10 per gesture step
       pinch.delta = -e.deltaY * 0.003;
       pinch.active = true;
