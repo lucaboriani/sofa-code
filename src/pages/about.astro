@@ -1,0 +1,42 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+
+const tech = ['Astro 5', 'TypeScript', 'WebGL / WebGL2', 'Web Audio API', 'Vitest', 'Playwright', 'View Transitions API'];
+---
+<BaseLayout title="About — SOFA/WORKS" active="about">
+  <section class="about">
+    <div class="hero-eyebrow">// About</div>
+    <h1 class="about-title">Vibe-coded<br/><span class="dim">from the</span><br/><span class="accent">sofa.</span></h1>
+    <div class="about-body">
+      <p>SOFA/WORKS is a small, growing gallery of WebGL experiments. Each room is one idea, one canvas, one evening's worth of curiosity. No business case. No roadmap. Just looking for the shape of something interesting and saving it before it's gone.</p>
+      <p>Hover any card to peek inside. Click to enter.</p>
+    </div>
+    <div class="about-tech">
+      <div class="hero-eyebrow">// Built with</div>
+      <ul class="tech-list">
+        {tech.map(t => <li class="tag t-cyan">{t}</li>)}
+      </ul>
+    </div>
+    <div class="about-contact">
+      <div class="hero-eyebrow">// Contact</div>
+      <p class="contact-line">lboriani@contents.com</p>
+    </div>
+  </section>
+</BaseLayout>
+<style>
+  .about {
+    padding: clamp(120px, 18vw, 180px) clamp(20px, 5vw, 48px) 80px;
+    max-width: 880px;
+    position: relative; z-index: 1;
+  }
+  .about-title {
+    font-size: clamp(36px, 7vw, 80px); font-weight: 800;
+    line-height: 0.95; letter-spacing: -0.03em; margin-bottom: 40px;
+  }
+  .about-title .dim { color: var(--text-dim); }
+  .about-title .accent { color: var(--accent); }
+  .about-body p { font-family: var(--mono); font-size: 13px; color: var(--text-mid); line-height: 1.8; max-width: 60ch; margin-bottom: 16px; }
+  .about-tech, .about-contact { margin-top: 56px; padding-top: 32px; border-top: 1px solid var(--border); }
+  .tech-list { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 20px; }
+  .contact-line { font-family: var(--mono); font-size: 14px; color: var(--text); margin-top: 16px; }
+</style>
