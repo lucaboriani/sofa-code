@@ -2,7 +2,6 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import Hero from '@/components/Hero.astro';
-import FilterBar from '@/components/FilterBar.astro';
 import RoomCard from '@/components/RoomCard.astro';
 
 const all = await getCollection('rooms');
@@ -16,7 +15,10 @@ const spanFor = (i: number): 'wide' | 'narrow' | 'third' => {
 ---
 <BaseLayout title="SOFA/WORKS — Gallery" active="home">
   <Hero />
-  <FilterBar />
+  <div class="quip-bar">
+    <span class="quip-label">Filter:</span>
+    <span class="quip-text">404 productivity not found</span>
+  </div>
   <section class="projects">
     {sorted.map((entry: CollectionEntry<'rooms'>, i: number) => (
       <RoomCard
@@ -35,3 +37,16 @@ const spanFor = (i: number): 'wide' | 'narrow' | 'third' => {
     import '@/scripts/room-preview.ts';
   </script>
 </BaseLayout>
+<style>
+  .quip-bar {
+    position: relative; z-index: 1;
+    padding: 0 clamp(20px, 5vw, 48px) 40px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .quip-label { color: var(--text-dim); }
+  .quip-text { color: var(--accent); }
+</style>

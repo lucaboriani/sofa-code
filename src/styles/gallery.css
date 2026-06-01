@@ -66,13 +66,15 @@
     animation: fadeUp 0.6s 0.2s ease forwards;
   }
   .hero-title {
-    font-size: clamp(36px, 8vw, 96px);
+    font-size: clamp(28px, 8vw, 96px);
     font-weight: 800;
     line-height: 0.92;
     letter-spacing: -0.03em;
     margin-bottom: 32px;
     opacity: 0;
     animation: fadeUp 0.7s 0.35s ease forwards;
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
   .hero-title .dim { color: var(--text-dim); }
   .hero-title .accent { color: var(--accent); }
