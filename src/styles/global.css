@@ -15,6 +15,11 @@ body {
 html:has(body.room-body), body.room-body {
   overscroll-behavior: none;
 }
+/* Block browser pan/zoom on room pages so pinch never zooms the page (the
+   room canvas consumes its own gestures). iOS ignores this — see room-stage.ts. */
+body.room-body {
+  touch-action: none;
+}
 
 body::before {
   content: '';

@@ -17,5 +17,8 @@ const { slug, hasAudio } = Astro.props;
     display: block;
     z-index: 0;
     background: #000;
+    /* The room drives its own two-finger pinch via pointer events — stop the
+       browser from hijacking touches to pan/zoom the page instead. */
+    touch-action: none;
   }
 </style>
