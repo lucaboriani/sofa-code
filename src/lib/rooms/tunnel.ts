@@ -455,6 +455,10 @@ export const mount: RoomMount = (canvas, opts) => {
     sharedState.speed   = speed;
     sharedState.camTime = camTime;
 
+    // Re-bind the program every tick — defensive against any caller that
+    // changes the GL state between frames (e.g. another room mounting on
+    // the same context during view transitions).
+    gl.useProgram(program);
     gl.uniform2f(uniforms.uRes, RW, RH);
     gl.uniform1f(uniforms.uTime, camTime);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

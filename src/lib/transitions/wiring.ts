@@ -7,24 +7,20 @@ const FADE_MS = 600;
 
 export function wireTransitions(
   bus: AudioBus,
-  resolveSlug: SlugResolver,
-  resolveHasAudio: AudioResolver
+  _resolveSlug: SlugResolver,
+  _resolveHasAudio: AudioResolver
 ): () => void {
+  // Crossfade out on navigation. The new room's audio is activated only
+  // when the user clicks the audio prompt — auto-activating here creates
+  // an AudioContext without a user gesture (suspended on Safari/Firefox)
+  // and stacks duplicate audio graphs across navigations.
   const onBeforePrep = (): void => {
     void bus.deactivate(FADE_MS);
   };
-  const onAfterSwap = (): void => {
-    const slug = resolveSlug();
-    if (!slug) return;
-    if (!resolveHasAudio(slug)) return;
-    void bus.activate(slug, FADE_MS);
-  };
 
   document.addEventListener('astro:before-preparation', onBeforePrep);
-  document.addEventListener('astro:after-swap', onAfterSwap);
 
   return () => {
     document.removeEventListener('astro:before-preparation', onBeforePrep);
-    document.removeEventListener('astro:after-swap', onAfterSwap);
   };
 }

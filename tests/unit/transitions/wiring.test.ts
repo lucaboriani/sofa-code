@@ -20,40 +20,30 @@ describe('wireTransitions', () => {
     });
   });
 
-  it('dispatches deactivate(600) on astro:before-preparation when leaving a room', () => {
+  it('dispatches deactivate(600) on astro:before-preparation', () => {
     const { bus } = makeBus();
     const spy = vi.spyOn(bus, 'deactivate');
-    Object.defineProperty(window, 'location', { value: new URL('http://localhost/rooms/neural'), configurable: true });
     detach = wireTransitions(bus, () => 'neural', () => true);
     document.dispatchEvent(new Event('astro:before-preparation'));
     expect(spy).toHaveBeenCalledWith(600);
     detach();
   });
 
-  it('dispatches activate(slug, 600) on astro:after-swap for a room with audio', () => {
+  it('does not auto-activate on astro:after-swap (audio waits for the user prompt click)', () => {
     const { bus } = makeBus();
     const spy = vi.spyOn(bus, 'activate');
     detach = wireTransitions(bus, () => 'neural', () => true);
     document.dispatchEvent(new Event('astro:after-swap'));
-    expect(spy).toHaveBeenCalledWith('neural', 600);
-    detach();
-  });
-
-  it('does not call activate on non-room route', () => {
-    const { bus } = makeBus();
-    const spy = vi.spyOn(bus, 'activate');
-    detach = wireTransitions(bus, () => null, () => false);
-    document.dispatchEvent(new Event('astro:after-swap'));
     expect(spy).not.toHaveBeenCalled();
     detach();
   });
 
-  it('does not activate for a room without audio', () => {
+  it('detach removes both listeners', () => {
     const { bus } = makeBus();
-    const spy = vi.spyOn(bus, 'activate');
-    detach = wireTransitions(bus, () => 'tunnel', () => false);
-    document.dispatchEvent(new Event('astro:after-swap'));
-    expect(spy).not.toHaveBeenCalled();
+    const spy = vi.spyOn(bus, 'deactivate');
+    detach = wireTransitions(bus, () => 'neural', () => true);
     detach();
+    document.dispatchEvent(new Event('astro:before-preparation'));
+    expect(spy).not.toHaveBeenCalled();
   });
 });
