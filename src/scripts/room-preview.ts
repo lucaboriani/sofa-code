@@ -6,7 +6,12 @@ const isRoomSlug = (s: string): s is RoomSlug => s === 'neural' || s === 'tunnel
 
 async function paintFirstFrame(handle: RoomHandle): Promise<void> {
   handle.resume();
-  await new Promise<void>(r => requestAnimationFrame(() => r()));
+  // Multi-pass rooms (swarm's blur ping-pong, neural's halo pass) need
+  // a few rAF cycles to settle into a presentable composite — one frame
+  // can leave intermediate FBOs as the visible result.
+  for (let i = 0; i < 3; i++) {
+    await new Promise<void>(r => requestAnimationFrame(() => r()));
+  }
   handle.pause();
 }
 
