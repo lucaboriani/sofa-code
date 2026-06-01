@@ -9,9 +9,13 @@ const WEB_COUNT = { preview: 40, full: 260 } as const;
 
 // ── Shared state: bridges the RAF loop (visual) → audio tick ─────────────────
 const sharedState = {
-  speedEMA: 0,   // EMA of mean |velocity| across webs, normalised [0..1]
-  alphaEMA: 0,   // EMA of mean web alpha [0..1]
-  pinchScale: 1  // current pinch scale from interaction (1 = no pinch)
+  speedEMA: 0,      // EMA of mean |velocity| across webs, normalised [0..1]
+  alphaEMA: 0,      // EMA of mean web alpha [0..1]
+  pinchScale: 1,    // current pinch scale from interaction (1 = no pinch)
+  pinchActive: false, // true while a two-finger pinch is in progress
+  gyroActive: false,  // true once the device has reported orientation
+  gyroX: 0,         // smoothed gamma (left/right tilt), normalised [-1..1]
+  gyroY: 0          // smoothed beta (front/back tilt), normalised [-1..1]
 };
 
 // ── Shader sources ────────────────────────────────────────────────────────────
@@ -495,16 +499,34 @@ export const createAudio: AudioFactory = (ctx) => {
     node: masterGain,
     tick() {
       const t = ctx.currentTime;
-      // Clamp pinch scale to a useful pitch-bend range
-      const pinchMul = sharedState.pinchScale > 0
-        ? Math.max(0.5, Math.min(2.5, sharedState.pinchScale))
-        : 1;
-      // 1. Speed → filter brightness
-      lpf.frequency.setTargetAtTime(900 + sharedState.speedEMA * 6000 * pinchMul, t, 0.2);
+      // 1. Swarm speed → filter brightness (base layer)
+      lpf.frequency.setTargetAtTime(900 + sharedState.speedEMA * 6000, t, 0.2);
       // 2. Alpha → master volume
       masterGain.gain.setTargetAtTime(sharedState.alphaEMA * 0.10, t, 0.3);
-      // 3. Bass inversely coupled to master, swells with alpha
+      // 3. Bass swells with alpha
       bassGain.gain.setTargetAtTime(0.18 * Math.min(1, sharedState.alphaEMA * 1.4), t, 0.4);
+
+      // 4. Pinch → dedicated pitch-bend override (spiderweb-swarm.html L640-644):
+      //    spread (scale > 1) opens the filter, contract (< 1) closes it. A fast
+      //    0.15 s constant makes the gesture audible even on a still swarm —
+      //    overrides the speed term above while the pinch is active.
+      if (sharedState.pinchActive) {
+        const ratio = Math.max(0.5, Math.min(3.0, sharedState.pinchScale));
+        const pitchBend = Math.log2(ratio);
+        lpf.frequency.setTargetAtTime(Math.min(400 + pitchBend * 800, 2000), t, 0.15);
+      }
+
+      // 5. Gyroscope (spiderweb-swarm.html L646-659): gamma tilt → filter
+      //    brightness (only when not pinching, so they don't fight), beta tilt →
+      //    bass swell. Both override the base layers when the device reports tilt.
+      if (sharedState.gyroActive) {
+        if (!sharedState.pinchActive) {
+          const gyroBright = 600 + sharedState.gyroX * 500; // ~100..1100 Hz
+          lpf.frequency.setTargetAtTime(Math.max(80, Math.min(gyroBright, 1600)), t, 0.6);
+        }
+        const gyroBassVol = Math.max(0, Math.min(0.28, 0.10 + sharedState.gyroY * 0.18));
+        bassGain.gain.setTargetAtTime(gyroBassVol, t, 0.8);
+      }
     }
   };
 };
@@ -704,6 +726,8 @@ export const mount: RoomMount = (canvas, opts) => {
     const pinch = { active: false, cx: 0, cy: 0, dist: 0, scale: 1, delta: 0 };
     // Active pointer map for two-finger pinch tracking
     const activePointers = new Map<number, { x: number; y: number }>();
+    // Gyroscope (mobile tilt) state — smoothed, normalised to [-1..1]
+    const gyro = { x: 0, y: 0, active: false };
 
     function pDown(x: number, y: number): void {
       ptr.down = true; ptr.x = x; ptr.y = y; ptr.dx = 0; ptr.dy = 0;
@@ -791,12 +815,44 @@ export const mount: RoomMount = (canvas, opts) => {
     canvas.addEventListener('pointercancel', onPointerUp);
     canvas.addEventListener('wheel',         onWheel, { passive: false });
 
+    // ── Gyroscope (spiderweb-swarm.html L498-526) ───────────────────────────
+    // gamma = left/right tilt (-90..90), beta = front/back tilt. Smoothed and
+    // normalised; feeds both audio (tick) and a gentle per-frame web nudge.
+    const onDeviceOrientation = (e: DeviceOrientationEvent): void => {
+      if (e.gamma === null || e.beta === null) return;
+      gyro.active = true;
+      gyro.x = gyro.x * 0.85 + (e.gamma / 90) * 0.15;
+      gyro.y = gyro.y * 0.85 + (e.beta / 90) * 0.15;
+    };
+    // iOS 13+ gates the sensor behind a permission prompt that must be triggered
+    // from a user gesture; Android exposes it immediately.
+    type OrientationPerm = { requestPermission?: () => Promise<'granted' | 'denied'> };
+    const requestGyro = (): void => {
+      if (typeof DeviceOrientationEvent === 'undefined') return;
+      const DOE = DeviceOrientationEvent as unknown as OrientationPerm;
+      if (typeof DOE.requestPermission === 'function') {
+        DOE.requestPermission()
+          .then((state) => {
+            if (state === 'granted') window.addEventListener('deviceorientation', onDeviceOrientation);
+          })
+          .catch(() => { /* permission denied or dismissed — silently no-op */ });
+      } else {
+        window.addEventListener('deviceorientation', onDeviceOrientation);
+      }
+    };
+    // Try immediately (Android), then again on the first pointer (iOS gesture).
+    requestGyro();
+    const onFirstPointer = (): void => requestGyro();
+    canvas.addEventListener('pointerdown', onFirstPointer, { once: true });
+
     listenerCleanups.push(
       () => canvas.removeEventListener('pointerdown',   onPointerDown),
       () => canvas.removeEventListener('pointermove',   onPointerMove),
       () => canvas.removeEventListener('pointerup',     onPointerUp),
       () => canvas.removeEventListener('pointercancel', onPointerUp),
       () => canvas.removeEventListener('wheel',         onWheel),
+      () => canvas.removeEventListener('pointerdown',   onFirstPointer),
+      () => window.removeEventListener('deviceorientation', onDeviceOrientation),
     );
 
     // ── Render loop ──────────────────────────────────────────────────────────
@@ -805,6 +861,13 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     const loop = createRafLoop((_dt, _t) => {
+      // Gyroscope tilt — nudges every web gently in the tilt direction
+      // (spiderweb-swarm.html L672-685).
+      if (gyro.active) {
+        const gx = gyro.x * 0.012, gy = gyro.y * 0.010;
+        for (const web of webs) { web.vx += gx; web.vy += gy; }
+      }
+
       // Apply pointer forces to web velocities (ported from original render())
       for (const web of webs) {
         const ddx = web.cx - ptr.x, ddy = web.cy - ptr.y;
@@ -858,6 +921,10 @@ export const mount: RoomMount = (canvas, opts) => {
         sharedState.speedEMA = sharedState.speedEMA * 0.875 + Math.min(meanSpeed * 8, 1) * 0.125;
         sharedState.alphaEMA = sharedState.alphaEMA * 0.967 + meanAlpha * 0.033;
         sharedState.pinchScale = pinch.active ? pinch.scale : 1;
+        sharedState.pinchActive = pinch.active;
+        sharedState.gyroActive = gyro.active;
+        sharedState.gyroX = gyro.x;
+        sharedState.gyroY = gyro.y;
       }
 
       // 1. Draw webs → fboSharp
@@ -928,6 +995,8 @@ export const mount: RoomMount = (canvas, opts) => {
       sharedState.speedEMA = sharedState.speedEMA * 0.875 + Math.min(meanSpeed * 8, 1) * 0.125;
       sharedState.alphaEMA = sharedState.alphaEMA * 0.967 + meanAlpha * 0.033;
       sharedState.pinchScale = 1; // no pinch in preview
+      sharedState.pinchActive = false;
+      sharedState.gyroActive = false; // no gyro/tilt input in preview
     }
 
     // 1. Draw webs → fboSharp
