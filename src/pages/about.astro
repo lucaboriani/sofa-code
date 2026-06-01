@@ -18,8 +18,7 @@ const tech = ['Astro 5', 'TypeScript', 'WebGL / WebGL2', 'Web Audio API', 'Vites
       </ul>
     </div>
     <div class="about-contact">
-      <div class="hero-eyebrow">// Contact</div>
-      <p class="contact-line">lboriani@contents.com</p>
+      <p class="contact-line">ZeroPara</p>
     </div>
   </section>
 </BaseLayout>
@@ -38,5 +37,11 @@ const tech = ['Astro 5', 'TypeScript', 'WebGL / WebGL2', 'Web Audio API', 'Vites
   .about-body p { font-family: var(--mono); font-size: 13px; color: var(--text-mid); line-height: 1.8; max-width: 60ch; margin-bottom: 16px; }
   .about-tech, .about-contact { margin-top: 56px; padding-top: 32px; border-top: 1px solid var(--border); }
   .tech-list { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 20px; }
-  .contact-line { font-family: var(--mono); font-size: 14px; color: var(--text); margin-top: 16px; }
+  .contact-line {
+    font-family: var(--sans);
+    font-size: clamp(28px, 5vw, 48px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+  }
 </style>
