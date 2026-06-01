@@ -14,29 +14,31 @@ const { slug } = Astro.props;
 <style>
   .audio-prompt {
     position: fixed;
-    left: 24px;
-    bottom: 24px;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
     z-index: 6;
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 16px;
     font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.15em;
+    font-size: clamp(14px, 2.2vw, 20px);
+    letter-spacing: 0.25em;
     text-transform: uppercase;
-    color: var(--text-mid);
-    background: rgba(8, 11, 16, 0.6);
-    backdrop-filter: blur(8px);
-    border: 1px solid var(--border);
-    padding: 8px 14px 8px 12px;
+    color: var(--text);
+    background: rgba(8, 11, 16, 0.72);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-bright);
+    padding: 20px 36px;
     cursor: pointer;
-    transition: color 0.2s, border-color 0.2s, background 0.2s;
+    transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.2s;
   }
   .audio-prompt:hover {
     color: var(--accent);
     border-color: var(--accent);
-    background: rgba(8, 11, 16, 0.78);
+    background: rgba(8, 11, 16, 0.88);
+    transform: translate(-50%, -50%) scale(1.03);
   }
   .audio-prompt.is-dismissed { display: none; }
-  .audio-prompt-icon { font-size: 14px; line-height: 1; }
+  .audio-prompt-icon { font-size: 1.4em; line-height: 1; }
 </style>
