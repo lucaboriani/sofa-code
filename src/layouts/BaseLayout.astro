@@ -22,6 +22,28 @@ const { title, active = 'home' } = Astro.props;
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
   <ClientRouter />
+  <script>
+    import { getAudioBus } from '@/lib/audio/bus';
+    import { wireTransitions } from '@/lib/transitions/wiring';
+
+    const bus = getAudioBus();
+
+    const resolveSlug = (): string | null => {
+      const m = location.pathname.match(/^\/rooms\/([a-z-]+)/);
+      return m ? m[1] : null;
+    };
+
+    const resolveHasAudio = (slug: string): boolean => {
+      const el = document.querySelector<HTMLCanvasElement>(`[data-room-stage="${slug}"]`);
+      return el?.dataset.hasAudio === 'true';
+    };
+
+    const detachKey = '__sofaTransitionsDetach__';
+    const w = window as unknown as Window & { [k: string]: unknown };
+    const prev = w[detachKey];
+    if (typeof prev === 'function') (prev as () => void)();
+    w[detachKey] = wireTransitions(bus, resolveSlug, resolveHasAudio);
+  </script>
 </head>
 <body>
   <Nav active={active} />

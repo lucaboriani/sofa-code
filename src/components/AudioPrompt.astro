@@ -1,0 +1,32 @@
+---
+interface Props { slug: 'neural' | 'tunnel' | 'swarm'; }
+const { slug } = Astro.props;
+---
+<div class="audio-prompt" data-audio-prompt={slug}>
+  <button type="button" class="audio-prompt-btn">▶ Click to enable audio</button>
+</div>
+<style>
+  .audio-prompt {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.72);
+    z-index: 10;
+    cursor: pointer;
+  }
+  .audio-prompt.is-dismissed { display: none; }
+  .audio-prompt-btn {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: rgba(200,140,255,0.9);
+    background: transparent;
+    border: 1px solid rgba(180,80,255,0.4);
+    padding: 14px 32px;
+    cursor: pointer;
+  }
+  .audio-prompt-btn:hover { background: rgba(140,60,255,0.15); }
+</style>

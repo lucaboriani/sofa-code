@@ -1,0 +1,20 @@
+---
+interface Props { slug: 'neural' | 'tunnel' | 'swarm'; }
+const { slug } = Astro.props;
+---
+<canvas
+  class="room-stage"
+  data-room-stage={slug}
+  transition:name={`room-canvas-${slug}`}
+></canvas>
+<style>
+  .room-stage {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    z-index: 0;
+    background: #000;
+  }
+</style>
