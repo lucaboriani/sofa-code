@@ -23,6 +23,21 @@ const { title, active = 'home', chrome = 'site' } = Astro.props;
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
   <ClientRouter />
+  <script is:inline>
+    // ClientRouter wraps each navigation in document.startViewTransition. When
+    // a new navigation aborts an in-flight transition, the previous one's
+    // Promise rejects with InvalidStateError. The rejection is harmless but
+    // shows up in the console — swallow only this specific case.
+    if (!window.__sofaVtRejectionFilter) {
+      window.__sofaVtRejectionFilter = true;
+      window.addEventListener('unhandledrejection', e => {
+        const r = e.reason;
+        if (r && r.name === 'InvalidStateError' && /Transition was aborted/i.test(r.message || '')) {
+          e.preventDefault();
+        }
+      });
+    }
+  </script>
   <script>
     import { getAudioBus } from '@/lib/audio/bus';
     import { wireTransitions } from '@/lib/transitions/wiring';
