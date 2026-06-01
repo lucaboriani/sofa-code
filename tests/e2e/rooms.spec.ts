@@ -12,11 +12,11 @@ test('clicking a card navigates into the room with no console errors', async ({ 
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
 
-test('audio prompt appears only on neural room', async ({ page }) => {
-  await page.goto('/rooms/tunnel');
-  await expect(page.locator('[data-audio-prompt]')).toHaveCount(0);
-  await page.goto('/rooms/neural');
-  await expect(page.locator('[data-audio-prompt]')).toBeVisible();
+test('audio prompt appears on every audio-enabled room', async ({ page }) => {
+  for (const slug of ['tunnel', 'swarm', 'neural'] as const) {
+    await page.goto(`/rooms/${slug}`);
+    await expect(page.locator(`[data-audio-prompt="${slug}"]`)).toBeVisible();
+  }
 });
 
 test('back-to-gallery from a room does not throw', async ({ page }) => {
