@@ -147,6 +147,11 @@
     position: relative; overflow: hidden;
     transition: background 0.3s;
     opacity: 0; animation: fadeIn 0.5s ease forwards;
+    cursor: pointer;
+  }
+  .card-stretch-link { color: inherit; text-decoration: none; }
+  .card-stretch-link::after {
+    content: ''; position: absolute; inset: 0; z-index: 3;
   }
   .project-card:hover { background: var(--surface); }
   .project-card::after {
