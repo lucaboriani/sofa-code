@@ -18,7 +18,7 @@ const d = entry.data;
 ---
 <BaseLayout title={`${d.title} — SOFA/WORKS`} chrome="minimal">
   <main class="room-page">
-    <RoomStage slug={d.slug as 'neural' | 'tunnel' | 'swarm'} />
+    <RoomStage slug={d.slug as 'neural' | 'tunnel' | 'swarm'} hasAudio={d.hasAudio} />
     <header class="room-chrome room-chrome-top">
       <a class="room-back" href="/">← Index</a>
       <div class="room-meta">
@@ -36,11 +36,6 @@ const d = entry.data;
     </aside>
     {d.hasAudio && <AudioPrompt slug={d.slug as 'neural' | 'tunnel' | 'swarm'} />}
   </main>
-  <script define:vars={{ hasAudio: d.hasAudio }} is:inline>
-    document.querySelectorAll('[data-room-stage]').forEach((c) => {
-      /** @type {HTMLElement} */ (c).dataset.hasAudio = String(hasAudio);
-    });
-  </script>
   <script>
     import '@/scripts/room-stage.ts';
   </script>

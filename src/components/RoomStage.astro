@@ -1,10 +1,11 @@
 ---
-interface Props { slug: 'neural' | 'tunnel' | 'swarm'; }
-const { slug } = Astro.props;
+interface Props { slug: 'neural' | 'tunnel' | 'swarm'; hasAudio: boolean; }
+const { slug, hasAudio } = Astro.props;
 ---
 <canvas
   class="room-stage"
   data-room-stage={slug}
+  data-has-audio={String(hasAudio)}
   transition:name={`room-canvas-${slug}`}
 ></canvas>
 <style>

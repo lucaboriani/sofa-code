@@ -24,10 +24,6 @@ async function mountCurrent(): Promise<void> {
     const prompt = document.querySelector<HTMLElement>('[data-audio-prompt]');
     if (prompt) {
       prompt.addEventListener('click', () => {
-        // Both calls run their synchronous portion inside the user gesture
-        // (creates the AudioContext and registers ramps). Awaiting would
-        // introduce a microtask boundary that some browsers treat as
-        // outside the gesture, leaving the context suspended.
         void bus.activate(slug, 600);
         void bus.resume();
         prompt.classList.add('is-dismissed');
