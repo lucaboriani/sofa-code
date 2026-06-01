@@ -9,8 +9,9 @@ import '@/styles/gallery.css';
 interface Props {
   title: string;
   active?: 'home' | 'about';
+  chrome?: 'site' | 'minimal';
 }
-const { title, active = 'home' } = Astro.props;
+const { title, active = 'home', chrome = 'site' } = Astro.props;
 ---
 <!doctype html>
 <html lang="en">
@@ -46,8 +47,8 @@ const { title, active = 'home' } = Astro.props;
   </script>
 </head>
 <body>
-  <Nav active={active} />
+  {chrome === 'site' && <Nav active={active} />}
   <slot />
-  <Footer />
+  {chrome === 'site' && <Footer />}
 </body>
 </html>

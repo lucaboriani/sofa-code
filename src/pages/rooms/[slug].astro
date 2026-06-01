@@ -16,7 +16,7 @@ interface Props { entry: CollectionEntry<'rooms'>; }
 const { entry } = Astro.props;
 const d = entry.data;
 ---
-<BaseLayout title={`${d.title} — SOFA/WORKS`}>
+<BaseLayout title={`${d.title} — SOFA/WORKS`} chrome="minimal">
   <main class="room-page">
     <RoomStage slug={d.slug as 'neural' | 'tunnel' | 'swarm'} />
     <header class="room-chrome room-chrome-top">

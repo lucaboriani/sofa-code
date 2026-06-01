@@ -24,7 +24,6 @@ precision highp float;
 #define MARCH_STEPS ${marchSteps}
 uniform vec2  uRes;
 uniform float uTime;
-uniform float uSpeed;
 out vec4 fragColor;
 
 const float HALF_FOV = 0.6283;
@@ -110,7 +109,6 @@ void main(){
     grey=surface(wx*2.0,wz,false)*fade(rowDist)*0.45;
   }
   grey*=postFX(gl_FragCoord.xy,uRes);
-  // uSpeed is available for future use (currently drives audio only)
   fragColor=vec4(vec3(grey),1.0);
 }`;
 }
@@ -150,7 +148,7 @@ export const mount: RoomMount = (canvas, opts) => {
   gl.deleteShader(fs);
   gl.useProgram(program);
 
-  const uniforms = getUniforms(gl, program, ['uRes', 'uTime', 'uSpeed'] as const);
+  const uniforms = getUniforms(gl, program, ['uRes', 'uTime'] as const);
 
   // ── Pixel readback buffer — allocated once ─────────────────────────────────
   // 6 rows (3 floor + 3 ceiling): used by audio subsystem to sample bright pixels.
@@ -208,7 +206,6 @@ export const mount: RoomMount = (canvas, opts) => {
 
     gl.uniform2f(uniforms.uRes, RW, RH);
     gl.uniform1f(uniforms.uTime, camTime);
-    gl.uniform1f(uniforms.uSpeed, speed);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // ── Pixel readback for audio-reactive line drone ───────────────────────
