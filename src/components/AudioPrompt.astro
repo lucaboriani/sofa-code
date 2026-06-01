@@ -2,31 +2,41 @@
 interface Props { slug: 'neural' | 'tunnel' | 'swarm'; }
 const { slug } = Astro.props;
 ---
-<div class="audio-prompt" data-audio-prompt={slug}>
-  <button type="button" class="audio-prompt-btn">▶ Click to enable audio</button>
-</div>
+<button
+  type="button"
+  class="audio-prompt"
+  data-audio-prompt={slug}
+  aria-label="Enable audio"
+>
+  <span class="audio-prompt-icon" aria-hidden="true">♪</span>
+  <span class="audio-prompt-label">Enable audio</span>
+</button>
 <style>
   .audio-prompt {
     position: fixed;
-    inset: 0;
-    display: flex;
+    left: 24px;
+    bottom: 24px;
+    z-index: 6;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    background: rgba(0,0,0,0.72);
-    z-index: 10;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-mid);
+    background: rgba(8, 11, 16, 0.6);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    padding: 8px 14px 8px 12px;
     cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s;
+  }
+  .audio-prompt:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(8, 11, 16, 0.78);
   }
   .audio-prompt.is-dismissed { display: none; }
-  .audio-prompt-btn {
-    font-family: var(--mono);
-    font-size: 13px;
-    letter-spacing: 0.25em;
-    text-transform: uppercase;
-    color: rgba(200,140,255,0.9);
-    background: transparent;
-    border: 1px solid rgba(180,80,255,0.4);
-    padding: 14px 32px;
-    cursor: pointer;
-  }
-  .audio-prompt-btn:hover { background: rgba(140,60,255,0.15); }
+  .audio-prompt-icon { font-size: 14px; line-height: 1; }
 </style>
