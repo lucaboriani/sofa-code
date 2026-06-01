@@ -1,0 +1,55 @@
+---
+interface Props { kind: 'nodes' | 'grid' | 'map' }
+const { kind } = Astro.props;
+---
+{kind === 'nodes' && (
+  <div class="visual-nodes" data-visual="nodes"></div>
+)}
+{kind === 'grid' && (
+  <div class="visual-grid" data-visual="grid">
+    {Array.from({ length: 32 }).map(() => <div class="visual-grid-cell"></div>)}
+  </div>
+)}
+{kind === 'map' && (
+  <div class="visual-map" data-visual="map">
+    <div class="map-dot" style="top:40%;left:30%"><div class="map-ring" style="width:40px;height:40px;top:50%;left:50%;animation-delay:0s"></div></div>
+    <div class="map-dot" style="top:55%;left:68%;background:var(--accent2);box-shadow:0 0 6px var(--accent2)"><div class="map-ring" style="width:30px;height:30px;top:50%;left:50%;border-color:rgba(123,97,255,0.3);animation-delay:0.7s"></div></div>
+    <div class="map-dot" style="top:25%;left:55%;background:var(--accent);box-shadow:0 0 6px var(--accent)"><div class="map-ring" style="width:24px;height:24px;top:50%;left:50%;border-color:rgba(0,229,255,0.2);animation-delay:1.4s"></div></div>
+  </div>
+)}
+<script>
+  const graphs = document.querySelectorAll<HTMLElement>('[data-visual="nodes"]');
+  graphs.forEach(g => {
+    if (g.dataset.built === '1') return;
+    g.dataset.built = '1';
+    const nodes = [{x:10,y:50},{x:25,y:20},{x:25,y:80},{x:45,y:40},{x:45,y:70},{x:65,y:25},{x:65,y:55},{x:80,y:45},{x:90,y:70},{x:90,y:20}];
+    const edges: [number, number][] = [[0,1],[0,2],[1,3],[2,4],[3,5],[3,6],[4,6],[5,7],[6,7],[7,8],[7,9]];
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.setAttribute('viewBox','0 0 100 100');
+    svg.setAttribute('style','position:absolute;inset:0');
+    edges.forEach(([a,b]) => {
+      const l = document.createElementNS(NS,'line');
+      l.setAttribute('x1', String(nodes[a].x)); l.setAttribute('y1', String(nodes[a].y));
+      l.setAttribute('x2', String(nodes[b].x)); l.setAttribute('y2', String(nodes[b].y));
+      l.setAttribute('stroke','rgba(0,229,255,0.15)'); l.setAttribute('stroke-width','0.5');
+      svg.appendChild(l);
+    });
+    nodes.forEach((n,i) => {
+      const c = document.createElementNS(NS,'circle');
+      c.setAttribute('cx', String(n.x)); c.setAttribute('cy', String(n.y));
+      c.setAttribute('r', i===7 ? '2.5' : '1.5');
+      c.setAttribute('fill', i===7 ? '#00e5ff' : 'rgba(0,229,255,0.5)');
+      svg.appendChild(c);
+    });
+    g.appendChild(svg);
+  });
+
+  const grids = document.querySelectorAll<HTMLElement>('[data-visual="grid"] .visual-grid-cell');
+  grids.forEach(cell => {
+    const v = Math.random();
+    if (v > 0.8) cell.style.background = 'rgba(0,229,255,0.12)';
+    else if (v > 0.6) cell.style.background = 'rgba(0,229,255,0.06)';
+    cell.style.animationDelay = `${Math.random() * 2}s`;
+  });
+</script>

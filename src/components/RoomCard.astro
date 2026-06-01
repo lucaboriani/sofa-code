@@ -1,0 +1,35 @@
+---
+import CardVisual from './CardVisual.astro';
+import RoomCanvasPreview from './RoomCanvasPreview.astro';
+
+interface Props {
+  slug: 'neural' | 'tunnel' | 'swarm';
+  num: string;
+  title: string;
+  description: string;
+  tags: string[];
+  year: number;
+  accent: 'cyan' | 'purple' | 'red';
+  cardVisual: 'nodes' | 'grid' | 'map';
+  span?: 'wide' | 'narrow' | 'third' | 'half' | 'full';
+}
+const { slug, num, title, description, tags, year, accent, cardVisual, span = 'third' } = Astro.props;
+const tagClass = (i: number): string => i === 0 ? `tag t-${accent}` : 'tag';
+---
+<article class={`project-card card-${span}`} data-room-card={slug}>
+  <div class="card-glow"></div>
+  <div class="card-num">{num}</div>
+  <div class="card-visual">
+    <CardVisual kind={cardVisual} />
+    <RoomCanvasPreview slug={slug} />
+  </div>
+  <div class="card-tags">
+    {tags.map((t, i) => <span class={tagClass(i)}>{t}</span>)}
+  </div>
+  <a class="card-title" href={`/rooms/${slug}`} transition:name={`room-title-${slug}`}>{title}</a>
+  <p class="card-desc">{description}</p>
+  <div class="card-footer">
+    <span class="card-year">{year}</span>
+    <a class="card-arrow" href={`/rooms/${slug}`} aria-label={`Enter ${title}`}>↗</a>
+  </div>
+</article>

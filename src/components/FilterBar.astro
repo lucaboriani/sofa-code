@@ -1,0 +1,16 @@
+---
+---
+<div class="filter-bar">
+  <span class="filter-label">Filter:</span>
+  <button class="filter-btn active" type="button" data-filter="all">All</button>
+  <button class="filter-btn" type="button" data-filter="webgl">WebGL</button>
+  <button class="filter-btn" type="button" data-filter="audio">Audio</button>
+  <button class="filter-btn" type="button" data-filter="generative">Generative</button>
+</div>
+<script>
+  const btns = document.querySelectorAll<HTMLButtonElement>('.filter-btn');
+  btns.forEach(b => b.addEventListener('click', () => {
+    btns.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  }));
+</script>

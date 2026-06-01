@@ -1,0 +1,38 @@
+---
+import { getCollection, type CollectionEntry } from 'astro:content';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import Hero from '@/components/Hero.astro';
+import FilterBar from '@/components/FilterBar.astro';
+import RoomCard from '@/components/RoomCard.astro';
+
+const all = await getCollection('rooms');
+const sorted = all.sort((a: CollectionEntry<'rooms'>, b: CollectionEntry<'rooms'>) => a.data.order - b.data.order);
+
+const spanFor = (i: number): 'wide' | 'narrow' | 'third' => {
+  if (i === 0) return 'wide';
+  if (i === 1) return 'narrow';
+  return 'third';
+};
+---
+<BaseLayout title="SOFA/WORKS — Gallery" active="home">
+  <Hero />
+  <FilterBar />
+  <section class="projects">
+    {sorted.map((entry: CollectionEntry<'rooms'>, i: number) => (
+      <RoomCard
+        slug={entry.data.slug}
+        num={String(i + 1).padStart(2, '0')}
+        title={entry.data.title}
+        description={entry.data.description}
+        tags={entry.data.tags}
+        year={entry.data.year}
+        accent={entry.data.accent}
+        cardVisual={entry.data.cardVisual}
+        span={spanFor(i)}
+      />
+    ))}
+  </section>
+  <script>
+    import '@/scripts/room-preview.ts';
+  </script>
+</BaseLayout>

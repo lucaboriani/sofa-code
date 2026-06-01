@@ -1,0 +1,22 @@
+---
+interface Props { slug: 'neural' | 'tunnel' | 'swarm' }
+const { slug } = Astro.props;
+---
+<canvas
+  class="room-preview-canvas"
+  data-room-preview={slug}
+  transition:name={`room-canvas-${slug}`}
+  aria-hidden="true"
+></canvas>
+<style>
+  .room-preview-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 300ms;
+    pointer-events: none;
+  }
+  .project-card:hover .room-preview-canvas { opacity: 1; }
+</style>
