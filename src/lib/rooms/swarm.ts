@@ -1,4 +1,5 @@
 import type { RoomMount } from '@/lib/webgl/types';
+import type { AudioFactory } from '@/lib/audio/bus';
 import { createContext } from '@/lib/webgl/context';
 import { compileShader, linkProgram, getUniforms } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
@@ -358,6 +359,135 @@ interface WebInstance {
   geom: Float32Array;
   vertCount: number;
 }
+
+// ── Audio factory ─────────────────────────────────────────────────────────────
+//
+// Ported from spiderweb-swarm.html initAudio():
+//   - 5 chord oscillators (sine for low freqs, triangle for upper) at 55/82.4/110/164.8/220 Hz
+//     each tripled with ±2 cent detune → into a per-note gain → shared lowpass filter
+//   - LFO at 0.07 Hz modulating master gain ±0.06
+//   - Filter LFO at 0.04 Hz modulating filter cutoff ±280 Hz
+//   - Sub-bass: two sine oscillators at 36 Hz (±3 cent detune) → lowpass 120 Hz → bass gain
+//   - Bass LFO at 0.12 Hz (no destination in original; kept as a slow rumble by making it
+//     wiggle the bass filter frequency instead, faithful to the "slow oscillation" intent)
+//   - Master fades from 0 → 0.10 over ~4 s; bass gain fades 0 → 0.18 over ~5 s
+//
+// The AudioBus connects masterGain to ctx.destination for us — we must NOT do it here.
+
+export const createAudio: AudioFactory = (ctx) => {
+  // ── Master gain (all signal paths merge here) ─────────────────────────────
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = 0;
+
+  // ── Dry / wet split into convolution reverb ───────────────────────────────
+  const irLen = Math.floor(ctx.sampleRate * 4);
+  const ir = ctx.createBuffer(2, irLen, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = ir.getChannelData(ch);
+    for (let i = 0; i < irLen; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2.5);
+    }
+  }
+  const conv = ctx.createConvolver();
+  conv.buffer = ir;
+  conv.connect(masterGain);
+
+  const dry = ctx.createGain();
+  dry.gain.value = 0.35;
+  dry.connect(masterGain);
+
+  const wet = ctx.createGain();
+  wet.gain.value = 0.65;
+  wet.connect(conv);
+
+  // ── Shared lowpass filter ─────────────────────────────────────────────────
+  const lpf = ctx.createBiquadFilter();
+  lpf.type = 'lowpass';
+  lpf.frequency.value = 900;
+  lpf.Q.value = 1.2;
+  lpf.connect(dry);
+  lpf.connect(wet);
+
+  // ── Chord oscillators: 55 / 82.4 / 110 / 164.8 / 220 Hz ─────────────────
+  // Original gains: [0.22, 0.14, 0.10, 0.06, 0.04]
+  const chordFreqs: [number, number][] = [
+    [55,    0.22],
+    [82.4,  0.14],
+    [110,   0.10],
+    [164.8, 0.06],
+    [220,   0.04],
+  ];
+  chordFreqs.forEach(([freq, gainVal], idx) => {
+    const g = ctx.createGain();
+    g.gain.value = gainVal;
+    g.connect(lpf);
+    const type: OscillatorType = idx < 2 ? 'sine' : 'triangle';
+    for (const det of [-2, 0, 2]) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.value = freq;
+      o.detune.value = det;
+      o.connect(g);
+      o.start();
+    }
+  });
+
+  // ── Amplitude LFO (0.07 Hz) → master gain ────────────────────────────────
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 0.07;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 0.06;
+  lfo.connect(lfoGain);
+  lfoGain.connect(masterGain.gain);
+  lfo.start();
+
+  // ── Filter LFO (0.04 Hz) → lpf frequency ─────────────────────────────────
+  const flfo = ctx.createOscillator();
+  flfo.frequency.value = 0.04;
+  const flfoGain = ctx.createGain();
+  flfoGain.gain.value = 280;
+  flfo.connect(flfoGain);
+  flfoGain.connect(lpf.frequency);
+  flfo.start();
+
+  // Fade master in over ~4 s
+  masterGain.gain.setTargetAtTime(0.10, ctx.currentTime, 4);
+
+  // ── Sub-bass: two sine oscillators at 36 Hz → lowpass → bass gain ─────────
+  const bassGain = ctx.createGain();
+  bassGain.gain.value = 0;
+  bassGain.connect(masterGain);
+
+  const bassLpf = ctx.createBiquadFilter();
+  bassLpf.type = 'lowpass';
+  bassLpf.frequency.value = 120;
+  bassLpf.Q.value = 0.7;
+  bassLpf.connect(bassGain);
+
+  for (const det of [-3, 3]) {
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.value = 36;
+    o.detune.value = det;
+    o.connect(bassLpf);
+    o.start();
+  }
+
+  // Bass LFO (0.12 Hz) → bass filter frequency wobble
+  const blfo = ctx.createOscillator();
+  blfo.frequency.value = 0.12;
+  const blfoGain = ctx.createGain();
+  blfoGain.gain.value = 8;
+  blfo.connect(blfoGain);
+  blfoGain.connect(bassLpf.frequency);
+  blfo.start();
+
+  // Fade bass in over ~5 s
+  bassGain.gain.setTargetAtTime(0.18, ctx.currentTime, 5);
+
+  // ── Tick: no-op (all modulation is driven by running oscillators) ─────────
+  return { node: masterGain };
+};
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
 

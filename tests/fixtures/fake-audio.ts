@@ -4,14 +4,50 @@ export interface FakeGain {
   connect(dest: unknown): void;
   disconnect(): void;
 }
+
+function makeAudioParam(initial = 0): {
+  value: number;
+  setValueAtTime(v: number, t: number): void;
+  setTargetAtTime(v: number, t: number, tc: number): void;
+  cancelScheduledValues(t: number): void;
+  exponentialRampToValueAtTime(v: number, t: number): void;
+} {
+  let val = initial;
+  return {
+    get value() { return val; },
+    set value(v: number) { val = v; },
+    setValueAtTime(v: number) { val = v; },
+    setTargetAtTime(v: number) { val = v; },
+    cancelScheduledValues() {},
+    exponentialRampToValueAtTime(v: number) { val = v; }
+  };
+}
+
 export interface FakeAudioContext {
   currentTime: number;
+  sampleRate: number;
   state: 'suspended' | 'running' | 'closed';
   destination: { _id: 'destination' };
   resume(): Promise<void>;
   close(): Promise<void>;
   createGain(): FakeGain;
   createBufferSource(): { connect(d: unknown): void; start(): void; stop(): void; buffer: null; loop: boolean };
+  createBiquadFilter(): {
+    type: string;
+    frequency: ReturnType<typeof makeAudioParam>;
+    Q: ReturnType<typeof makeAudioParam>;
+    connect(d: unknown): void;
+  };
+  createOscillator(): {
+    type: string;
+    frequency: ReturnType<typeof makeAudioParam>;
+    connect(d: unknown): void;
+    start(): void;
+    stop(): void;
+  };
+  createBuffer(channels: number, length: number, sampleRate: number): {
+    getChannelData(ch: number): Float32Array;
+  };
 }
 
 export function makeFakeAudio(): FakeAudioContext {
@@ -19,6 +55,7 @@ export function makeFakeAudio(): FakeAudioContext {
   const ctx: FakeAudioContext = {
     get currentTime() { return now; },
     set currentTime(v: number) { now = v; },
+    sampleRate: 44100,
     state: 'suspended',
     destination: { _id: 'destination' },
     async resume() { ctx.state = 'running'; },
@@ -39,6 +76,27 @@ export function makeFakeAudio(): FakeAudioContext {
     },
     createBufferSource() {
       return { connect() {}, start() {}, stop() {}, buffer: null, loop: false };
+    },
+    createBiquadFilter() {
+      return {
+        type: 'lowpass',
+        frequency: makeAudioParam(350),
+        Q: makeAudioParam(1),
+        connect() {}
+      };
+    },
+    createOscillator() {
+      return {
+        type: 'sine',
+        frequency: makeAudioParam(440),
+        connect() {},
+        start() {},
+        stop() {}
+      };
+    },
+    createBuffer(_channels: number, length: number) {
+      const data = new Float32Array(length);
+      return { getChannelData: () => data };
     }
   };
   return ctx;

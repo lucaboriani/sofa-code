@@ -5,6 +5,6 @@ description: Endless pixel tunnel. Drag up and down to control velocity. WebGL2 
 tags: [WebGL2, Generative]
 year: 2025
 accent: cyan
-hasAudio: false
+hasAudio: true
 cardVisual: grid
 order: 2
