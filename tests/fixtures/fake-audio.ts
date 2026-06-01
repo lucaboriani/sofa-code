@@ -18,6 +18,7 @@ export function makeFakeAudio(): FakeAudioContext {
   let now = 0;
   const ctx: FakeAudioContext = {
     get currentTime() { return now; },
+    set currentTime(v: number) { now = v; },
     state: 'suspended',
     destination: { _id: 'destination' },
     async resume() { ctx.state = 'running'; },
