@@ -90,25 +90,9 @@ export const createAudio = (ctx: AudioContext): RoomAudio => {
   nbp.connect(noiseGain);
   noiseGain.connect(droneGain);
 
-  // ── Mic analyser (visual reactivity only — not connected to destination) ─────
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 256;
-  const bins = new Uint8Array(analyser.frequencyBinCount);
-
-  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    const src = ctx.createMediaStreamSource(stream);
-    src.connect(analyser);
-  }).catch(() => { /* permission denied — RMS stays 0, demo still runs */ });
-
   return {
     node: droneGain,
     tick() {
-      // Mic → rms (visual reactivity)
-      analyser.getByteFrequencyData(bins);
-      let sum = 0;
-      for (let i = 0; i < bins.length; i++) sum += bins[i] * bins[i];
-      sharedState.rms = Math.sqrt(sum / bins.length) / 255;
-
       // Drone modulation from simulation state
       const t = ctx.currentTime;
       const speed = sharedState.simSpeed;

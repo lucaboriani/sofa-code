@@ -7,6 +7,13 @@ import { createRafLoop } from '@/lib/webgl/raf';
 
 const WEB_COUNT = { preview: 40, full: 260 } as const;
 
+// ── Shared state: bridges the RAF loop (visual) → audio tick ─────────────────
+const sharedState = {
+  speedEMA: 0,   // EMA of mean |velocity| across webs, normalised [0..1]
+  alphaEMA: 0,   // EMA of mean web alpha [0..1]
+  pinchScale: 1  // current pinch scale from interaction (1 = no pinch)
+};
+
 // ── Shader sources ────────────────────────────────────────────────────────────
 
 const STRAND_VS = `
@@ -450,8 +457,7 @@ export const createAudio: AudioFactory = (ctx) => {
   flfoGain.connect(lpf.frequency);
   flfo.start();
 
-  // Fade master in over ~4 s
-  masterGain.gain.setTargetAtTime(0.10, ctx.currentTime, 4);
+  // masterGain.gain is driven per-frame by tick() via sharedState.alphaEMA
 
   // ── Sub-bass: two sine oscillators at 36 Hz → lowpass → bass gain ─────────
   const bassGain = ctx.createGain();
@@ -482,11 +488,25 @@ export const createAudio: AudioFactory = (ctx) => {
   blfoGain.connect(bassLpf.frequency);
   blfo.start();
 
-  // Fade bass in over ~5 s
-  bassGain.gain.setTargetAtTime(0.18, ctx.currentTime, 5);
+  // bassGain.gain is driven per-frame by tick() via sharedState.alphaEMA
 
-  // ── Tick: no-op (all modulation is driven by running oscillators) ─────────
-  return { node: masterGain };
+  // ── Tick: drives audio graph from sharedState (populated by the RAF loop) ──
+  return {
+    node: masterGain,
+    tick() {
+      const t = ctx.currentTime;
+      // Clamp pinch scale to a useful pitch-bend range
+      const pinchMul = sharedState.pinchScale > 0
+        ? Math.max(0.5, Math.min(2.5, sharedState.pinchScale))
+        : 1;
+      // 1. Speed → filter brightness
+      lpf.frequency.setTargetAtTime(900 + sharedState.speedEMA * 6000 * pinchMul, t, 0.2);
+      // 2. Alpha → master volume
+      masterGain.gain.setTargetAtTime(sharedState.alphaEMA * 0.10, t, 0.3);
+      // 3. Bass inversely coupled to master, swells with alpha
+      bassGain.gain.setTargetAtTime(0.18 * Math.min(1, sharedState.alphaEMA * 1.4), t, 0.4);
+    }
+  };
 };
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
@@ -826,6 +846,20 @@ export const mount: RoomMount = (canvas, opts) => {
       // so hover repulsion resumes quickly
       if (!activePointers.size) pinch.active = false;
 
+      // ── Update sharedState for audio tick ───────────────────────────────────
+      {
+        let sumSpeed = 0, sumAlpha = 0;
+        for (const web of webs) {
+          sumSpeed += Math.hypot(web.vx, web.vy);
+          sumAlpha += web.alpha;
+        }
+        const meanSpeed = sumSpeed / Math.max(1, webs.length);
+        const meanAlpha = sumAlpha / Math.max(1, webs.length);
+        sharedState.speedEMA = sharedState.speedEMA * 0.875 + Math.min(meanSpeed * 8, 1) * 0.125;
+        sharedState.alphaEMA = sharedState.alphaEMA * 0.967 + meanAlpha * 0.033;
+        sharedState.pinchScale = pinch.active ? pinch.scale : 1;
+      }
+
       // 1. Draw webs → fboSharp
       gl.bindFramebuffer(gl.FRAMEBUFFER, fboSharp.fb);
       gl.viewport(0, 0, W, H);
@@ -882,6 +916,20 @@ export const mount: RoomMount = (canvas, opts) => {
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
   const loop = createRafLoop((_dt, _t) => {
+    // ── Update sharedState for audio tick (harmless in preview; audio is off) ─
+    {
+      let sumSpeed = 0, sumAlpha = 0;
+      for (const web of webs) {
+        sumSpeed += Math.hypot(web.vx, web.vy);
+        sumAlpha += web.alpha;
+      }
+      const meanSpeed = sumSpeed / Math.max(1, webs.length);
+      const meanAlpha = sumAlpha / Math.max(1, webs.length);
+      sharedState.speedEMA = sharedState.speedEMA * 0.875 + Math.min(meanSpeed * 8, 1) * 0.125;
+      sharedState.alphaEMA = sharedState.alphaEMA * 0.967 + meanAlpha * 0.033;
+      sharedState.pinchScale = 1; // no pinch in preview
+    }
+
     // 1. Draw webs → fboSharp
     gl.bindFramebuffer(gl.FRAMEBUFFER, fboSharp.fb);
     gl.viewport(0, 0, W, H);

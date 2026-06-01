@@ -8,7 +8,12 @@ import { createRafLoop } from '@/lib/webgl/raf';
 const MARCH_STEPS = { preview: 24, full: 48 } as const;
 
 // ── Shared state (written by mount each frame, read by audio tick) ────────────
-const sharedState = { speed: 3.5, camTime: 0 };
+const sharedState = {
+  speed: 3.5,
+  camTime: 0,
+  floorBrightness: 0,
+  ceilingBrightness: 0
+};
 
 // ── Vertex shader (fullscreen triangle, no attributes) ────────────────────────
 const VS_SRC = `#version 300 es
@@ -131,7 +136,8 @@ const MAX_PIXEL_BUF_BYTES = 4096 * 6 * 4;
 export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
   // ── Master gain ─────────────────────────────────────────────────────────────
   const masterGain = ctx.createGain();
-  masterGain.gain.value = 0.15;
+  masterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  masterGain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 2.0);
 
   // ── Reverb IR (synthetic exponential decay) ──────────────────────────────────
   const irLen = Math.floor(ctx.sampleRate * 2.8);
@@ -247,7 +253,7 @@ export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
 
   const lineMix = ctx.createGain(); lineMix.gain.value = 0.9;
   lineOsc1.connect(lineMix); lineOsc2.connect(lineMix); noiseGain.connect(lineMix);
-  const lineGain = ctx.createGain(); lineGain.gain.value = 0.4;
+  const lineGain = ctx.createGain(); lineGain.gain.value = 0.0;
   lineMix.connect(lineGain);
   lineGain.connect(masterGain);
   const lineRevGain = ctx.createGain(); lineRevGain.gain.value = 0.35;
@@ -291,7 +297,7 @@ export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
   flangerDelay.connect(flangerWet);
   flangerLFO.start();
 
-  const ceilGain = ctx.createGain(); ceilGain.gain.value = 0.3;
+  const ceilGain = ctx.createGain(); ceilGain.gain.value = 0.0;
   ceilMix.connect(ceilGain);
   flangerWet.connect(ceilGain);
   ceilGain.connect(masterGain);
@@ -359,6 +365,10 @@ export const createAudio: AudioFactory = (ctx: AudioContext): RoomAudio => {
       kickCount++;
       if (kickCount % 2 === 0) fireKick(spd);
     }
+
+    // Pixel-readback driven line drones — visual line density → audio gain
+    lineGain.gain.setTargetAtTime(sharedState.floorBrightness * 0.8, now, 0.4);
+    ceilGain.gain.setTargetAtTime(sharedState.ceilingBrightness * 0.6, now, 0.4);
   };
 
   return { node: masterGain, tick };
@@ -481,6 +491,16 @@ export const mount: RoomMount = (canvas, opts) => {
       gl.readPixels(0, c0, RW, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf, rowBytes * 3);
       gl.readPixels(0, c1, RW, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf, rowBytes * 4);
       gl.readPixels(0, c2, RW, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf, rowBytes * 5);
+
+      // Average green channel across 3 floor rows (offsets 0..rowBytes*3) and
+      // 3 ceiling rows (rowBytes*3..rowBytes*6). Cheap proxy for line density.
+      let floorSum = 0;
+      for (let i = 1; i < rowBytes * 3; i += 4) floorSum += pixelBuf[i];
+      let ceilSum = 0;
+      for (let i = rowBytes * 3 + 1; i < rowBytes * 6; i += 4) ceilSum += pixelBuf[i];
+      const totalPx = (rowBytes / 4) * 3;
+      sharedState.floorBrightness = floorSum / (totalPx * 255);
+      sharedState.ceilingBrightness = ceilSum / (totalPx * 255);
     }
   }, ac.signal);
 
