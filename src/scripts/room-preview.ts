@@ -10,6 +10,12 @@ async function paintFirstFrame(handle: RoomHandle): Promise<void> {
   handle.pause();
 }
 
+// All live preview handles on the current page. Used to tear them down before
+// View Transitions swap the DOM out, so their rAF loops don't keep running
+// against detached canvases (which then throws WebGL errors when the new room
+// mounts).
+const liveHandles = new Set<RoomHandle>();
+
 function init(): void {
   const canvases = document.querySelectorAll<HTMLCanvasElement>('[data-room-preview]');
   if (!canvases.length) return;
@@ -38,6 +44,7 @@ function init(): void {
         try {
           const mod = await rooms[slug]();
           handle = mod.mount(canvas, { quality: 'preview', audio: false, startPaused: true });
+          liveHandles.add(handle);
           state = 'running';
           await paintFirstFrame(handle);
           if (hovered) handle.resume();
@@ -45,6 +52,7 @@ function init(): void {
           mountInFlight = false;
         }
       } else if (action === 'teardown' && handle) {
+        liveHandles.delete(handle);
         handle.teardown();
         handle = null;
         state = 'idle';
@@ -68,5 +76,13 @@ function init(): void {
   });
 }
 
+function teardownAll(): void {
+  for (const h of liveHandles) {
+    try { h.teardown(); } catch { /* idempotent */ }
+  }
+  liveHandles.clear();
+}
+
 document.addEventListener('astro:page-load', init);
+document.addEventListener('astro:before-swap', teardownAll);
 init();
