@@ -1,0 +1,10 @@
+slug: swarm
+title: Spider Web Swarm
+subtitle: WebGL · Generative
+description: Swarm of radial spider webs drifting through space. Quad-expanded line strands, all motion driven on the GPU.
+tags: [WebGL, Generative]
+year: 2025
+accent: red
+hasAudio: false
+cardVisual: map
+order: 3
