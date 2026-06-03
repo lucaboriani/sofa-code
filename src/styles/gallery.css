@@ -45,7 +45,8 @@
     letter-spacing: 0.1em;
   }
   @media (max-width: 640px) {
-    .nav-links { display: none; }
+    .nav-badge { display: none; }
+    .nav-links { gap: 16px; }
     nav { padding: 16px 20px; }
   }
 
