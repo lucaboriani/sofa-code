@@ -1,7 +1,7 @@
 # SOFA/WORKS
 
 A small, growing gallery of WebGL "rooms" — creative-coding experiments
-vibe-coded from the sofa. Each room is one idea, one canvas, one
+human + AI coded from the sofa. Each room is one idea, one canvas, one
 evening's worth of curiosity.
 
 Live: _(deploy to Netlify and link here)_

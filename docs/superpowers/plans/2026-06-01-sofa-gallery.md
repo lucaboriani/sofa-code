@@ -1715,7 +1715,7 @@ const { active = 'home' } = Astro.props;
     <li><a href="/" class:list={[active === 'home' && 'is-active']}>Index</a></li>
     <li><a href="/about" class:list={[active === 'about' && 'is-active']}>About</a></li>
   </ul>
-  <div class="nav-badge">Vibe-coded · 2025</div>
+  <div class="nav-badge">Human + AI coded · 2025</div>
 </nav>
 ```
 
@@ -1798,7 +1798,7 @@ git commit -m "feat(ui): BaseLayout with Nav, Footer, and ClientRouter"
 ---
 <section class="hero">
   <div class="hero-orb"></div>
-  <div class="hero-eyebrow">// Vibe-coded experiments — 2025</div>
+  <div class="hero-eyebrow">// Human + AI coded experiments — 2025</div>
   <h1 class="hero-title">FROM<br><span class="dim">THE SOFA.</span><br><span class="accent">EXPERIMENTS IN MOTION.</span></h1>
   <p class="hero-sub">A small gallery of WebGL rooms. Hover any card to preview. Click to enter.</p>
 </section>
@@ -2836,7 +2836,7 @@ const tech = ['Astro 5', 'TypeScript', 'WebGL / WebGL2', 'Web Audio API', 'Vites
 <BaseLayout title="About — SOFA/WORKS" active="about">
   <section class="about">
     <div class="hero-eyebrow">// About</div>
-    <h1 class="about-title">Vibe-coded<br/><span class="dim">from the</span><br/><span class="accent">sofa.</span></h1>
+    <h1 class="about-title">Human + AI coded<br/><span class="dim">from the</span><br/><span class="accent">sofa.</span></h1>
     <div class="about-body">
       <p>SOFA/WORKS is a small, growing gallery of WebGL experiments. Each room is one idea, one canvas, one evening's worth of curiosity. No business case. No roadmap. Just looking for the shape of something interesting and saving it before it's gone.</p>
       <p>Hover any card to peek inside. Click to enter.</p>

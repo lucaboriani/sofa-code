@@ -5,7 +5,7 @@
 
 ## Summary
 
-An Astro + TypeScript site that hosts a gallery of "vibe-coded-from-the-sofa" interactive WebGL **rooms**. The look and feel is taken from `projects.html` (dark cyber/grid aesthetic, Syne + DM Mono typography), but copy and identity are personal — real rooms, no invented corporate metrics.
+An Astro + TypeScript site that hosts a gallery of "human-and-AI-coded-from-the-sofa" interactive WebGL **rooms**. The look and feel is taken from `projects.html` (dark cyber/grid aesthetic, Syne + DM Mono typography), but copy and identity are personal — real rooms, no invented corporate metrics.
 
 The first three rooms are refactored from the existing standalone files in the repo root:
 
