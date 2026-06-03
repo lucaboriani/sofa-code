@@ -2,7 +2,7 @@ import { rooms, type RoomSlug } from '@/lib/rooms/registry';
 import { getAudioBus } from '@/lib/audio/bus';
 import type { RoomHandle } from '@/lib/webgl/types';
 
-const isRoomSlug = (s: string): s is RoomSlug => s === 'neural' || s === 'tunnel' || s === 'swarm';
+const isRoomSlug = (s: string): s is RoomSlug => s in rooms;
 
 let activeHandle: RoomHandle | null = null;
 let gestureCleanup: (() => void) | null = null;

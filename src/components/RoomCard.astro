@@ -1,14 +1,15 @@
 ---
 import RoomCanvasPreview from './RoomCanvasPreview.astro';
+import type { RoomSlug } from '@/lib/rooms/registry';
 
 interface Props {
-  slug: 'neural' | 'tunnel' | 'swarm';
+  slug: RoomSlug;
   num: string;
   title: string;
   description: string;
   tags: string[];
   year: number;
-  accent: 'cyan' | 'purple' | 'red';
+  accent: 'cyan' | 'purple' | 'red' | 'gold' | 'crimson';
   span?: 'wide' | 'narrow' | 'third' | 'half' | 'full';
 }
 const { slug, num, title, description, tags, year, accent, span = 'third' } = Astro.props;

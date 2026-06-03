@@ -1,7 +1,7 @@
 import type { RoomMount } from '@/lib/webgl/types';
 import type { RoomAudio } from '@/lib/audio/bus';
 
-export type RoomSlug = 'neural' | 'tunnel' | 'swarm';
+export type RoomSlug = 'neural' | 'tunnel' | 'swarm' | 'ikebana' | 'bindu';
 
 export interface RoomModule {
   mount: RoomMount;
@@ -9,7 +9,9 @@ export interface RoomModule {
 }
 
 export const rooms: Record<RoomSlug, () => Promise<RoomModule>> = {
-  neural: () => import('./neural'),
-  tunnel: () => import('./tunnel'),
-  swarm:  () => import('./swarm')
+  neural:  () => import('./neural'),
+  tunnel:  () => import('./tunnel'),
+  swarm:   () => import('./swarm'),
+  ikebana: () => import('./ikebana'),
+  bindu:   () => import('./bindu')
 };

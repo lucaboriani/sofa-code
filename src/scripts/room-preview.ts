@@ -2,7 +2,7 @@ import { decide, type ReconcilerInput } from '@/lib/preview/reconciler';
 import { rooms, type RoomSlug } from '@/lib/rooms/registry';
 import type { RoomHandle } from '@/lib/webgl/types';
 
-const isRoomSlug = (s: string): s is RoomSlug => s === 'neural' || s === 'tunnel' || s === 'swarm';
+const isRoomSlug = (s: string): s is RoomSlug => s in rooms;
 
 async function paintFirstFrame(handle: RoomHandle): Promise<void> {
   handle.resume();

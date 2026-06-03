@@ -3,6 +3,7 @@ import { getCollection, type CollectionEntry } from 'astro:content';
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import RoomStage from '@/components/RoomStage.astro';
 import AudioPrompt from '@/components/AudioPrompt.astro';
+import type { RoomSlug } from '@/lib/rooms/registry';
 
 export async function getStaticPaths() {
   const all = await getCollection('rooms');
@@ -18,7 +19,7 @@ const d = entry.data;
 ---
 <BaseLayout title={`${d.title} — SOFA/WORKS`} chrome="minimal">
   <main class="room-page">
-    <RoomStage slug={d.slug as 'neural' | 'tunnel' | 'swarm'} hasAudio={d.hasAudio} />
+    <RoomStage slug={d.slug as RoomSlug} hasAudio={d.hasAudio} />
     <header class="room-chrome room-chrome-top">
       <a class="room-back" href="/">← Index</a>
       <div class="room-meta">
@@ -34,7 +35,7 @@ const d = entry.data;
         <p class="room-year">{d.year}</p>
       </div>
     </aside>
-    {d.hasAudio && <AudioPrompt slug={d.slug as 'neural' | 'tunnel' | 'swarm'} />}
+    {d.hasAudio && <AudioPrompt slug={d.slug as RoomSlug} />}
   </main>
   <script>
     import '@/scripts/room-stage.ts';

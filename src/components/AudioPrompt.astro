@@ -1,5 +1,6 @@
 ---
-interface Props { slug: 'neural' | 'tunnel' | 'swarm'; }
+import type { RoomSlug } from '@/lib/rooms/registry';
+interface Props { slug: RoomSlug; }
 const { slug } = Astro.props;
 ---
 <button
