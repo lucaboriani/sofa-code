@@ -1,5 +1,5 @@
 import type { RoomMount } from '@/lib/webgl/types';
-import type { RoomAudio } from '@/lib/audio/bus';
+import type { AudioFactory } from '@/lib/audio/bus';
 import { createContext } from '@/lib/webgl/context';
 import { compileShader, linkProgram, getUniforms } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
@@ -250,7 +250,7 @@ function computeIkebanaGeom(ik: Ikebana, version: number): IkebanaGeom {
 
 // ─── Audio factory (ikebana.html L239-401, 570-723) ─────────────────────────
 
-export const createAudio = (ctx: AudioContext): RoomAudio => {
+export const createAudio: AudioFactory = (ctx) => {
   // out is the single node handed to the AudioBus — everything that connected
   // to AC.destination in the original connects here instead.
   const out = ctx.createGain();
@@ -1011,7 +1011,9 @@ export const mount: RoomMount = (canvas, opts) => {
         if (shProg <= 0) return;
         if (shProg > 0.02 && !shimmeredShoots.has(sh)) {
           shimmeredShoots.add(sh);
-          audioLink?.playShimmer(sh.angle, bi);
+          // Card previews must never touch the audio graph — audioLink may
+          // still hold a previous room visit's factory closure.
+          if (full) audioLink?.playShimmer(sh.angle, bi);
         }
         const base = splinePt(fullSpline, sh.t);
         const ex = base[0] + Math.cos(sh.angle) * sh.len * W * shProg;
