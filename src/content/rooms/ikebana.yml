@@ -1,0 +1,9 @@
+slug: ikebana
+title: 池坊 — Ikebana
+subtitle: WebGL · Generative · Audio
+description: Procedural ikebana drawn as living calligraphy — shin, soe and tai unfurl from the water line. Touch a branch to play it like a string; double-tap grows a new arrangement.
+tags: [WebGL, Generative, Audio]
+year: 2026
+accent: gold
+hasAudio: true
+order: 4

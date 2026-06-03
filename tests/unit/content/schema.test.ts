@@ -9,7 +9,7 @@ const ROOMS_DIR = resolve(process.cwd(), 'src/content/rooms');
 describe('rooms schema', () => {
   it('all real room entries parse successfully and slug matches filename', () => {
     const files = readdirSync(ROOMS_DIR).filter(f => f.endsWith('.yml'));
-    expect(files.length).toBe(3);
+    expect(files.length).toBe(5);
     for (const f of files) {
       const data = parse(readFileSync(resolve(ROOMS_DIR, f), 'utf8'));
       const parsed = roomSchema.parse(data);
