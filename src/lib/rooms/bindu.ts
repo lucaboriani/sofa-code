@@ -1,5 +1,5 @@
 import type { RoomMount } from '@/lib/webgl/types';
-import type { RoomAudio } from '@/lib/audio/bus';
+import type { AudioFactory } from '@/lib/audio/bus';
 import { createContext } from '@/lib/webgl/context';
 import { compileShader, linkProgram, getUniforms } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
@@ -101,7 +101,7 @@ function resetLine(ln: Line): void {
 
 // ─── Audio factory (bindu.html L235-431) ─────────────────────────────────────
 
-export const createAudio = (ctx: AudioContext): RoomAudio => {
+export const createAudio: AudioFactory = (ctx) => {
   // master is the node handed to the AudioBus (original connected it to destination)
   const master = ctx.createGain();
   master.gain.setValueAtTime(0, ctx.currentTime);
@@ -438,9 +438,9 @@ export const mount: RoomMount = (canvas, opts) => {
     );
   }
 
-  // Touch drag also sets isDrag for the EMA below — mirror the mouse path.
-  // (The original distinguished them via dDX/dDY directly; we treat any
-  // nonzero dDX/dDY with active touch as dragging through the same vars.)
+  // isDrag is mouse-only, exactly as in bindu.html: touch drags drive the
+  // camera through dDX/dDY directly while isDrag stays false, so the audio
+  // EMA below ((isDrag ? dDX : 0)) deliberately ignores touch drags.
 
   // ── Overlay (full mode only) ───────────────────────────────────────────────
   let overlayRoot: HTMLElement | null = null;
@@ -453,10 +453,7 @@ export const mount: RoomMount = (canvas, opts) => {
   const vtx = new Float32Array(NUM * VPL * FLOATS);
   const lines: Line[] = [];
   for (let i = 0; i < NUM; i++) {
-    const l = makeTemplate() as Line;
-    l.t = Math.random() * (3 + Math.random() * 7);
-    l.life = 3 + Math.random() * 7;
-    lines.push(l);
+    lines.push({ ...makeTemplate(), t: Math.random() * (3 + Math.random() * 7), life: 3 + Math.random() * 7 });
   }
 
   function updateGeometry(): void {
