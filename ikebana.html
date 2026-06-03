@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+<title>池坊 — Ikebana</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+  body { background:#060503; overflow:hidden; width:100vw; height:100vh; touch-action:none; overscroll-behavior:none; }
+  canvas { display:block; width:100vw; height:100vh; touch-action:none; }
+  #kanji {
+    position:fixed; top:36px; left:44px;
+    font-family:'Hiragino Mincho ProN','Yu Mincho','MS Mincho',serif;
+    font-size:12px; letter-spacing:0.35em;
+    color:rgba(210,185,140,0.28);
+    writing-mode:vertical-rl; text-orientation:upright;
+    pointer-events:none; user-select:none;
+  }
+  #hint {
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+    font-family:'Hiragino Mincho ProN','Yu Mincho',Georgia,serif;
+    font-size:10px; letter-spacing:0.45em;
+    color:rgba(210,185,140,0.18);
+    pointer-events:none; user-select:none;
+    transition: opacity 2s;
+    white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="kanji">天　人　地</div>
+<div id="hint">doppio tap — nuovo ikebana</div>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl', { antialias:true, alpha:false });
+const hint = document.getElementById('hint');
+
+// ── Resize ────────────────────────────────────────────────────────────────
+function resize() {
+  canvas.width  = window.innerWidth  * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize); resize();
+
+// ── Shaders ───────────────────────────────────────────────────────────────
+const VS = `
+attribute vec2 a_pos;
+uniform vec2 u_res;
+void main() {
+  vec2 clip = (a_pos / u_res) * 2.0 - 1.0;
+  clip.y = -clip.y;
+  gl_Position = vec4(clip, 0.0, 1.0);
+}`;
+const FS = `
+precision mediump float;
+uniform vec4 u_color;
+void main() { gl_FragColor = u_color; }`;
+
+function mkShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s); return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+
+const aPos   = gl.getAttribLocation(prog, 'a_pos');
+const uRes   = gl.getUniformLocation(prog, 'u_res');
+const uColor = gl.getUniformLocation(prog, 'u_color');
+const vbuf   = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+function setColor(r,g,b,a) { gl.uniform4f(uColor,r,g,b,a); }
+
+// ── Thick polyline as triangle strip ──────────────────────────────────────
+function thickPolyline(pts, w) {
+  if (pts.length < 2) return;
+  const verts = [];
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(i-1,0)];
+    const next = pts[Math.min(i+1,pts.length-1)];
+    const dx = next[0]-prev[0], dy = next[1]-prev[1];
+    const len = Math.sqrt(dx*dx+dy*dy) || 1;
+    const nx = -dy/len * w * 0.5;
+    const ny =  dx/len * w * 0.5;
+    verts.push(pts[i][0]+nx, pts[i][1]+ny,
+               pts[i][0]-nx, pts[i][1]-ny);
+  }
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.DYNAMIC_DRAW);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, pts.length * 2);
+}
+
+function drawCirclePts(cx, cy, r, steps=32) {
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = (i/steps)*Math.PI*2;
+    pts.push([cx+Math.cos(a)*r, cy+Math.sin(a)*r]);
+  }
+  thickPolyline(pts, 0.8);
+}
+
+// ── Math ──────────────────────────────────────────────────────────────────
+const rnd = (a,b) => a+(b-a)*Math.random();
+const easeOut5 = t => 1 - Math.pow(1-Math.min(t,1), 5);
+const easeOut3 = t => 1 - Math.pow(1-Math.min(t,1), 3);
+
+function catmull(p0,p1,p2,p3,t) {
+  return [
+    0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t*t+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t*t*t),
+    0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t*t+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t*t*t)
+  ];
+}
+function buildSpline(cps, steps=140) {
+  const pts=[]; const n=cps.length;
+  for(let i=0;i<n-1;i++){
+    const p0=cps[Math.max(i-1,0)],p1=cps[i],p2=cps[i+1],p3=cps[Math.min(i+2,n-1)];
+    for(let j=0;j<=steps;j++) pts.push(catmull(p0,p1,p2,p3,j/steps));
+  }
+  return pts;
+}
+function splinePt(full,t){
+  return full[Math.min(Math.floor(t*(full.length-1)),full.length-1)];
+}
+
+// ── Procedural ikebana generator (2D) ────────────────────────────────────
+// All branches: bottom-left → upper-right
+// x: 0=left 1=right   y: 0=top 1=bottom
+
+function genIkebana() {
+  const ox = rnd(0.07, 0.20);
+  const oy = rnd(0.87, 0.96);
+
+  const palette = [
+    [rnd(0.82,0.92), rnd(0.72,0.82), rnd(0.50,0.62)],
+    [rnd(0.65,0.75), rnd(0.55,0.65), rnd(0.36,0.48)],
+    [rnd(0.50,0.62), rnd(0.42,0.54), rnd(0.28,0.38)],
+    [rnd(0.38,0.50), rnd(0.32,0.42), rnd(0.20,0.30)],
+    [rnd(0.28,0.38), rnd(0.22,0.32), rnd(0.12,0.22)],
+  ];
+
+  function mkBranch(color, alpha, width, ex, ey, curlX, shoots, budR, budDelay) {
+    return {
+      color, alpha, width,
+      delay: 0,
+      duration: rnd(2.8, 3.4),
+      cps: [
+        [ox, oy],
+        [ox+(ex-ox)*0.25+rnd(-0.04,0.04), oy-(oy-ey)*0.25+rnd(-0.05,0.05)],
+        [ox+(ex-ox)*0.55+curlX+rnd(-0.04,0.04), oy-(oy-ey)*0.55+rnd(-0.05,0.06)],
+        [ox+(ex-ox)*0.80+rnd(-0.02,0.02), oy-(oy-ey)*0.80+rnd(-0.03,0.04)],
+        [ex, ey],
+      ],
+      shoots, budR, budDelay,
+    };
+  }
+
+  // SHIN — steep, to upper-right
+  // 3 rametti: ura-shin near tip (echoes main direction upward),
+  // mid branch opens outward, lower one droops — classical shin gesture
+  const shin = mkBranch(
+    palette[0], rnd(0.82,0.92), rnd(1.8,2.6),
+    rnd(0.62,0.82), rnd(0.03,0.12),
+    rnd(-0.06,0.06),
+    [
+      { t:rnd(0.88,0.96), angle:rnd(-1.1,-0.5), len:rnd(0.09,0.14), delay:rnd(3.0,3.3) }, // ura-shin: near tip, upward
+      { t:rnd(0.60,0.75), angle:rnd(0.7,1.4),   len:rnd(0.07,0.12), delay:rnd(3.1,3.4) }, // mid: opens right
+      { t:rnd(0.35,0.52), angle:rnd(1.3,1.9),   len:rnd(0.05,0.09), delay:rnd(3.2,3.5) }, // lower: droops down-right
+    ],
+    rnd(2.8,4.2), 3.2
+  );
+
+  // SOE — medium diagonal
+  // 2 rametti: one near tip following the soe direction, one mid pointing upward
+  const soe = mkBranch(
+    palette[1], rnd(0.70,0.82), rnd(1.2,1.9),
+    rnd(0.76,0.94), rnd(0.10,0.22),
+    rnd(-0.05,0.07),
+    [
+      { t:rnd(0.82,0.94), angle:rnd(-0.6,0.0),  len:rnd(0.08,0.13), delay:rnd(3.0,3.3) }, // near tip
+      { t:rnd(0.48,0.65), angle:rnd(-1.2,-0.5), len:rnd(0.06,0.10), delay:rnd(3.2,3.5) }, // mid, reaches upward
+    ],
+    rnd(2.0,3.2), 3.5
+  );
+
+  // TAI — near-horizontal sweep (earth line)
+  // 2 rametti: tai shoots angle slightly downward — earth-hugging, heavy
+  const tai = mkBranch(
+    palette[2], rnd(0.60,0.72), rnd(1.0,1.6),
+    rnd(0.84,0.97), rnd(0.50,0.66),
+    rnd(-0.04,0.06),
+    [
+      { t:rnd(0.75,0.88), angle:rnd(1.4,2.0),   len:rnd(0.07,0.11), delay:rnd(3.0,3.3) }, // droop downward
+      { t:rnd(0.42,0.60), angle:rnd(-1.4,-0.7), len:rnd(0.05,0.09), delay:rnd(3.2,3.5) }, // pokes upward mid
+    ],
+    rnd(1.6,2.6), 3.8
+  );
+
+  // ACCENT — near-vertical, delicate
+  // 2 rametti: both short and fine, one each side of the stem
+  const accent = mkBranch(
+    palette[3], rnd(0.42,0.54), rnd(0.7,1.1),
+    rnd(0.38,0.60), rnd(0.01,0.09),
+    rnd(-0.06,0.06),
+    [
+      { t:rnd(0.82,0.93), angle:rnd(-1.1,-0.5), len:rnd(0.06,0.10), delay:rnd(3.2,3.5) },
+      { t:rnd(0.52,0.68), angle:rnd(0.6,1.2),   len:rnd(0.05,0.08), delay:rnd(3.3,3.6) },
+    ],
+    0, 99
+  );
+
+  // WHISPER — ghost, low angle — one delicate shoot, barely visible
+  const whisper = mkBranch(
+    palette[4], rnd(0.22,0.34), rnd(0.5,0.85),
+    rnd(0.88,0.98), rnd(0.56,0.72),
+    rnd(-0.03,0.05),
+    [
+      { t:rnd(0.70,0.85), angle:rnd(-1.0,-0.4), len:rnd(0.05,0.08), delay:rnd(3.4,3.7) },
+    ],
+    0, 99
+  );
+
+  return {
+    branches: [shin, soe, tai, accent, whisper],
+    ox, oy,
+    startTime: null,
+    fadeIn: 0,
+    _dying: false, _dead: false,
+  };
+}
+
+
+// ── Audio ─────────────────────────────────────────────────────────────────
+// AudioContext created inside a direct user-gesture handler.
+let AC = null;
+let masterGain = null;
+let droneOscs = [];
+let droneFilter = null;
+const shimmeredShoots = new WeakSet();
+
+function ensureAC() {
+  if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+
+  // Reverb impulse
+  const conv = AC.createConvolver();
+  const irN  = AC.sampleRate * 3.0;
+  const irBuf= AC.createBuffer(2, irN, AC.sampleRate);
+  for (let ch=0; ch<2; ch++) {
+    const d = irBuf.getChannelData(ch);
+    for (let i=0; i<irN; i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/irN,1.9);
+  }
+  conv.buffer = irBuf;
+
+  masterGain = AC.createGain();
+  masterGain.gain.setValueAtTime(0.001, AC.currentTime);
+  masterGain.gain.linearRampToValueAtTime(0.22, AC.currentTime + 0.05);
+  masterGain.connect(AC.destination);
+  const revSend = AC.createGain(); revSend.gain.value = 0.42;
+  masterGain.connect(revSend); revSend.connect(conv); conv.connect(AC.destination);
+
+  // 7-oscillator drone
+  const defs = [
+    {f:55,   t:'sine',     g:0.40},   // A1
+    {f:55.3, t:'sine',     g:0.24},   // A1 detuned
+    {f:82.4, t:'sine',     g:0.18},   // E2 fifth
+    {f:110,  t:'triangle', g:0.12},   // A2 octave
+    {f:110.5,t:'sine',     g:0.07},   // A2 detuned
+    {f:165,  t:'triangle', g:0.05},   // E3
+    {f:220,  t:'sine',     g:0.03},   // A3 overtone
+  ];
+  droneOscs = defs.map(def => {
+    const osc = AC.createOscillator(); osc.type = def.t; osc.frequency.value = def.f;
+    const lfo = AC.createOscillator(); const lfoG = AC.createGain();
+    lfo.frequency.value = 0.02 + Math.random()*0.06;
+    lfoG.gain.value = def.f * 0.0018;
+    lfo.connect(lfoG); lfoG.connect(osc.frequency); lfo.start();
+    const gNode = AC.createGain(); gNode.gain.value = def.g;
+    osc.connect(gNode); gNode.connect(masterGain); osc.start();
+    // store lfo nodes so we can retarget rate/depth per ikebana
+    return { osc, gNode, lfo, lfoG, baseFreq:def.f, baseGain:def.g };
+  });
+
+  // Breath LFO
+  const breathOsc = AC.createOscillator(); breathOsc.frequency.value = 0.055;
+  const breathG   = AC.createGain(); breathG.gain.value = 0.12;
+  breathOsc.connect(breathG); breathG.connect(masterGain.gain); breathOsc.start();
+
+  // Drag filter: a lowpass on the master chain whose cutoff is modulated by drag speed
+  droneFilter = AC.createBiquadFilter();
+  droneFilter.type = 'lowpass';
+  droneFilter.frequency.value = 800;
+  droneFilter.Q.value = 1.8;
+  // Re-route: masterGain → droneFilter → destination
+  masterGain.disconnect();
+  masterGain.connect(droneFilter);
+  droneFilter.connect(AC.destination);
+  // Reverb send from filter output too
+  droneFilter.connect(revSend);
+}
+
+// Morph drone frequencies and gains to reflect ikebana geometry
+// shinEndY: 0=tall/top, 1=short/bottom  → lower pitch when taller
+// taiEndX:  0=narrow, 1=wide spread     → more upper partials when wide
+// accentEndY: 0=very high, 1=low        → brighter when accent is high
+function morphDrone(shinEndY, taiEndX, accentEndY) {
+  if (!AC || droneOscs.length === 0) return;
+  // scales are applied live via renderIkebana — just reset gains to 0
+  // so the drone rebuilds from silence as the new ikebana draws
+  const t = AC.currentTime;
+  droneOscs.forEach(d => {
+    d.gNode.gain.cancelScheduledValues(t);
+    d.gNode.gain.setValueAtTime(0.0001, t);
+  });
+}
+
+// Per-branch shimmer — each branch index has a distinct timbral character
+// matching the touch voice personalities
+function playShimmer(angle, branchIdx) {
+  if (!AC) return;
+  const idx = branchIdx || 0;
+  const delay = Math.random() * 0.06;
+  const t = AC.currentTime + delay;
+
+  // Base freq per branch — matches register of touch voice
+  const registers = [90, 115, 140, 170, 110];
+  const freq = (registers[idx] || 120) * (1 + ((angle + Math.PI) / (Math.PI * 2)) * 0.8);
+
+  // Per-branch waveform + filter character:
+  // shin(0):    triangle, wide lowpass — dark puff
+  // soe(1):     sine, medium bp — warm bell-like
+  // tai(2):     triangle, tight bp high Q — woody tap
+  // accent(3):  sawtooth, narrow bp — nasal click
+  // whisper(4): sine, very soft, more noise — airy breath
+  const chars = [
+    { wave:'triangle', lpF: freq*2.0, lpQ:0.6, gain:0.028, atk:0.08, dec:0.50, rel:0.90 },
+    { wave:'sine',     lpF: freq*3.0, lpQ:1.2, gain:0.024, atk:0.05, dec:0.35, rel:0.70 },
+    { wave:'triangle', lpF: freq*1.4, lpQ:3.5, gain:0.030, atk:0.03, dec:0.25, rel:0.55 },
+    { wave:'sawtooth', lpF: freq*1.8, lpQ:2.8, gain:0.020, atk:0.02, dec:0.20, rel:0.45 },
+    { wave:'sine',     lpF: freq*2.5, lpQ:0.5, gain:0.016, atk:0.10, dec:0.55, rel:1.00 },
+  ];
+  const C = chars[idx] || chars[0];
+
+  const osc = AC.createOscillator();
+  osc.type = C.wave;
+  osc.frequency.value = freq;
+
+  const lp = AC.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = C.lpF;
+  lp.Q.value = C.lpQ;
+
+  // Small noise layer for woody/airy texture — amount varies per branch
+  const noiseAmts = [0.008, 0.005, 0.012, 0.006, 0.020];
+  const nLen = Math.floor(AC.sampleRate * C.rel);
+  const nBuf = AC.createBuffer(1, nLen, AC.sampleRate);
+  const nd = nBuf.getChannelData(0);
+  for (let i=0; i<nLen; i++) nd[i] = Math.random()*2-1;
+  const nSrc = AC.createBufferSource(); nSrc.buffer = nBuf;
+  const nFilt = AC.createBiquadFilter();
+  nFilt.type = 'bandpass'; nFilt.frequency.value = freq*1.3; nFilt.Q.value = 3;
+  const nG = AC.createGain(); nG.gain.value = noiseAmts[idx] || 0.008;
+  nSrc.connect(nFilt); nFilt.connect(nG);
+
+  const env = AC.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.linearRampToValueAtTime(C.gain, t + C.atk);
+  env.gain.linearRampToValueAtTime(C.gain * 0.35, t + C.dec);
+  env.gain.linearRampToValueAtTime(0.0001, t + C.rel);
+
+  osc.connect(lp); lp.connect(env);
+  nG.connect(env);
+  env.connect(AC.destination);
+  osc.start(t); osc.stop(t + C.rel + 0.05);
+  nSrc.start(t); nSrc.stop(t + C.rel + 0.05);
+}
+
+// Harmonic bloom on new ikebana, tuned to its root frequency
+function playBloom(rootFreq) {
+  if (!AC) return;
+  const t = AC.currentTime + 0.02;
+  // Deep, slow open-fifth chord — very low, long sustain
+  [1, 1.5, 2, 2.5].forEach((ratio, i) => {
+    const osc = AC.createOscillator(); const g = AC.createGain();
+    osc.type = i < 2 ? 'sine' : 'triangle';
+    osc.frequency.value = rootFreq * ratio;
+    const onset = t + i*0.18;
+    g.gain.setValueAtTime(0.001, onset);
+    g.gain.linearRampToValueAtTime(0.07 / (i*0.5+1), onset + 0.45);
+    g.gain.linearRampToValueAtTime(0.03 / (i*0.5+1), onset + 2.0);
+    g.gain.linearRampToValueAtTime(0.0001, onset + 4.0);
+    osc.connect(g); g.connect(AC.destination);
+    osc.start(onset); osc.stop(onset + 4.5);
+  });
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let ikebanas = [genIkebana()];
+let ripplePhase = 0;
+
+function launchIkebana(ik) {
+  const shin    = ik.branches[0];
+  const tai     = ik.branches[2];
+  const accent  = ik.branches[3];
+  ik._shinEndY   = shin.cps[shin.cps.length-1][1];
+  ik._taiEndX    = tai.cps[tai.cps.length-1][0];
+  ik._accentEndY = accent.cps[accent.cps.length-1][1];
+  ik._rootFreq   = 55 + (1 - ik._shinEndY) * 55;
+
+  // ── Derive LFO parameters from shoot geometry ─────────────────────────
+  // Collect all shoots across all branches
+  const allShoots = ik.branches.flatMap(br => br.shoots);
+  const nShoots   = allShoots.length || 1;
+
+  // Mean absolute angle (0=vertical, π/2=horizontal) → rate
+  const meanAngle = allShoots.reduce((s, sh) => s + Math.abs(sh.angle), 0) / nShoots;
+  // Angle spread (variance) → adds irregularity to rate
+  const angleVar  = allShoots.reduce((s, sh) => s + Math.pow(Math.abs(sh.angle) - meanAngle, 2), 0) / nShoots;
+  const angleSpread = Math.sqrt(angleVar);
+
+  // Mean shoot length → depth
+  const meanLen   = allShoots.reduce((s, sh) => s + sh.len, 0) / nShoots;
+
+  // Map to LFO parameters:
+  // rate:  more horizontal / more spread → faster LFO (0.03–0.20 Hz)
+  const lfoRateBase  = 0.03 + (meanAngle / Math.PI) * 0.12 + angleSpread * 0.08;
+  // depth: longer shoots → wider frequency wobble
+  const lfoDepthMult = 0.5 + meanLen * 10.0;   // meanLen ~0.05–0.13 → mult 1.0–1.8
+
+  ik._lfoRateBase  = lfoRateBase;
+  ik._lfoDepthMult = lfoDepthMult;
+  ik._nShoots      = nShoots;
+
+  // Pre-compute per-partial freq/gain scales for live morphing
+  const rootMult   = 0.75 + (1 - ik._shinEndY) * 0.80;
+  const spreadMult = 0.6  + ik._taiEndX * 0.8;
+  const brightMult = 0.4  + (1 - ik._accentEndY) * 1.2;
+  if (droneOscs.length) {
+    droneOscs.forEach((d, i) => {
+      const freqScale = i < 2 ? rootMult : i < 4 ? rootMult*spreadMult : rootMult*brightMult;
+      const gainScale = i < 2 ? 1.0 : i < 4 ? spreadMult : brightMult;
+      ik['_freqScale' + i] = freqScale;
+      ik['_gainScale' + i] = gainScale;
+    });
+
+    // Apply LFO rates and depths now — each partial gets a slightly staggered rate
+    const t = AC.currentTime;
+    droneOscs.forEach((d, i) => {
+      // Stagger: lower partials modulate slower, upper ones faster
+      const rate  = lfoRateBase * (0.7 + i * 0.12);
+      const depth = d.baseFreq * 0.0018 * lfoDepthMult * (0.6 + i * 0.1);
+      d.lfo.frequency.setTargetAtTime(rate,  t, 1.5);
+      d.lfoG.gain.setTargetAtTime(depth, t, 1.5);
+    });
+  }
+  return ik;
+}
+ikebanas[0] = launchIkebana(ikebanas[0]);
+
+function resetIkebana() {
+  ikebanas.forEach(ik => { ik._dying=true; ik._deathTime=performance.now(); });
+  const ik = launchIkebana(genIkebana());
+  ikebanas.push(ik);
+  playBloom(ik._rootFreq);
+  morphDrone(ik._shinEndY, ik._taiEndX, ik._accentEndY);
+  hint.style.opacity = '0';
+}
+
+// ── Double-tap ────────────────────────────────────────────────────────────
+let lastTap = 0, lastTouchX = 0, lastTouchY = 0;
+canvas.addEventListener('touchstart', e => {
+  lastTouchX = e.touches[0].clientX;
+  lastTouchY = e.touches[0].clientY;
+}, { passive:true });
+canvas.addEventListener('touchend', e => {
+  ensureAC(); // must be inside gesture handler
+  const dx = e.changedTouches[0].clientX - lastTouchX;
+  const dy = e.changedTouches[0].clientY - lastTouchY;
+  if (Math.sqrt(dx*dx+dy*dy) > 14) return;
+  const now = Date.now();
+  if (now - lastTap < 320) {
+    resetIkebana();
+  } else {
+    // first tap: morph drone to current ikebana
+    const ik = ikebanas[ikebanas.length-1];
+    if (ik) morphDrone(ik._shinEndY||0.1, ik._taiEndX||0.9, ik._accentEndY||0.05);
+  }
+  lastTap = now;
+}, { passive:true });
+canvas.addEventListener('dblclick', () => { ensureAC(); resetIkebana(); });
+// also start audio on first desktop click
+canvas.addEventListener('mousedown', () => {
+  ensureAC();
+  const ik = ikebanas[ikebanas.length-1];
+  if (ik) morphDrone(ik._shinEndY||0.1, ik._taiEndX||0.9, ik._accentEndY||0.05);
+}, { once: true });
+
+// ── Pointer tracking for line interaction ────────────────────────────────
+const pointer = { x:-9999, y:-9999, down:false, moved:false };
+
+let lastPointerX = 0, lastPointerY = 0, lastPointerTime = 0;
+let dragVelocity = 0;
+
+function pointerMove(cx, cy) {
+  const now = performance.now();
+  const nx = cx * devicePixelRatio;
+  const ny = cy * devicePixelRatio;
+  const dt = Math.max(1, now - lastPointerTime);
+  const dx = nx - lastPointerX, dy = ny - lastPointerY;
+  const speed = Math.sqrt(dx*dx + dy*dy) / dt; // px/ms
+  // Smooth velocity with exponential decay
+  dragVelocity = dragVelocity * 0.7 + speed * 0.3;
+
+  // Modulate drone filter cutoff: still → 300 Hz, fast drag → 2000 Hz
+  if (droneFilter && pointer.down) {
+    const targetCutoff = 300 + Math.min(dragVelocity * 4000, 1800);
+    droneFilter.frequency.setTargetAtTime(targetCutoff, AC.currentTime, 0.08);
+    // Also push Q slightly with speed for resonant sweep feel
+    droneFilter.Q.setTargetAtTime(1.4 + dragVelocity * 6, AC.currentTime, 0.1);
+  }
+
+  pointer.x = nx; pointer.y = ny;
+  pointer.moved = true;
+  lastPointerX = nx; lastPointerY = ny; lastPointerTime = now;
+}
+function pointerDown(cx, cy) {
+  pointer.down = true;
+  pointerMove(cx, cy);
+}
+function pointerUp() {
+  pointer.down = false;
+  pointer.moved = true; // force one more checkLineHit pass to clean up
+  dragVelocity = 0;
+  if (droneFilter && AC) {
+    droneFilter.frequency.setTargetAtTime(800, AC.currentTime, 0.5);
+    droneFilter.Q.setTargetAtTime(1.8, AC.currentTime, 0.5);
+  }
+}
+
+canvas.addEventListener('mousemove',  e => pointerMove(e.clientX, e.clientY));
+canvas.addEventListener('mousedown',  e => pointerDown(e.clientX, e.clientY), { capture:true });
+canvas.addEventListener('mouseup',    pointerUp);
+canvas.addEventListener('touchmove', e => {
+  if(e.touches.length===1) {
+    pointer.down = true;
+    pointerMove(e.touches[0].clientX, e.touches[0].clientY);
+  }
+}, { passive:true });
+canvas.addEventListener('touchstart', e => {
+  if(e.touches.length===1) {
+    pointerDown(e.touches[0].clientX, e.touches[0].clientY);
+    pointer.down = true;
+  }
+}, { passive:true, capture:true });
+canvas.addEventListener('touchend',   pointerUp, { passive:true });
+
+// Active disturbances: { created ms, branchIdx, splineT, amp, ikRef }
+const disturbances = [];
+
+// Live shoot positions for touch detection — rebuilt each frame
+// [ { pts: [[x,y]…], sh, angle, lastHit } ]
+const shootRegistry = [];
+
+// ── Looped branch touch sound ─────────────────────────────────────────────
+// One looped voice active while finger is down on a branch
+let touchVoice = null; // { osc, lp, env, trem, gainNode, angle }
+
+// branchGeom: { idx, curvature, length, angleSpread }
+function startTouchVoice(angle, branchColor, branchGeom) {
+  if (!AC) return;
+  stopTouchVoice();
+  const t = AC.currentTime;
+  const idx = branchGeom ? branchGeom.idx : 0;
+
+  // Base pitch: each branch has a different register
+  // shin=0 low, soe=1 mid-low, tai=2 mid, accent=3 mid-high, whisper=4 airy
+  const registers = [90, 115, 140, 170, 110];
+  const fund = (registers[idx] || 120) + ((angle + Math.PI) / (Math.PI * 2)) * 30;
+
+  // ── Per-branch oscillator personality ────────────────────────────────
+  // shin:    thick — three saws, heavy detune, dark
+  // soe:     bowed — square + triangle, medium resonance
+  // tai:     woody — triangle only, tight bandpass, earthy
+  // accent:  reedy — sawtooth + sub octave, nasal filter
+  // whisper: airy — sine + noise heavy, barely there
+  const personalities = [
+    { waves:['sawtooth','sawtooth','sawtooth'], detunes:[0,+6,-7], bpFreqMult:2.2, bpQ:1.8, lpFreq:600,  wobRate:5,  wobDepth:0.18, wingDepth:0.55, noiseQ:3,   noiseMult:1.0, noiseAmt:0.035, mixGain:0.28 }, // shin
+    { waves:['square','triangle','square'],     detunes:[0,+3,-3], bpFreqMult:2.8, bpQ:2.5, lpFreq:750,  wobRate:7,  wobDepth:0.14, wingDepth:0.40, noiseQ:5,   noiseMult:1.2, noiseAmt:0.028, mixGain:0.26 }, // soe
+    { waves:['triangle','triangle','triangle'], detunes:[0,+2,-2], bpFreqMult:2.0, bpQ:4.5, lpFreq:500,  wobRate:4,  wobDepth:0.22, wingDepth:0.35, noiseQ:6,   noiseMult:0.8, noiseAmt:0.020, mixGain:0.34 }, // tai — woody, tight
+    { waves:['sawtooth','sawtooth','triangle'], detunes:[0,+5,-4], bpFreqMult:3.5, bpQ:3.0, lpFreq:900,  wobRate:9,  wobDepth:0.12, wingDepth:0.45, noiseQ:4,   noiseMult:1.4, noiseAmt:0.032, mixGain:0.30 }, // accent — reedy, nasal
+    { waves:['sine','sine','triangle'],         detunes:[0,+1,-1], bpFreqMult:1.8, bpQ:1.2, lpFreq:400,  wobRate:3,  wobDepth:0.25, wingDepth:0.20, noiseQ:2,   noiseMult:0.9, noiseAmt:0.065, mixGain:0.22 }, // whisper — airy, noise-heavy
+  ];
+  const P = personalities[idx] || personalities[0];
+
+  // ── Shape modifiers from geometry ────────────────────────────────────
+  // curvature (0=straight 1=very curved): more curve → higher Q (more resonant)
+  // length (0–1 normalised):              longer branch → slower wobble, deeper AM
+  // angleSpread (0–1):                    wide spread → more detune, brighter bp
+  const curve  = branchGeom ? branchGeom.curvature  : 0.3;
+  const blen   = branchGeom ? branchGeom.length      : 0.5;
+  const spread = branchGeom ? branchGeom.angleSpread : 0.3;
+
+  const shapedBpQ    = P.bpQ    * (1 + curve * 1.4);
+  const shapedLpFreq = P.lpFreq * (1 + spread * 0.5);
+  const shapedWobRate= P.wobRate * (1 - blen * 0.4);        // long = slower
+  const shapedWobD   = P.wobDepth * (1 + blen * 0.6);       // long = deeper
+  const shapedDetune = P.detunes.map(d => d * (1 + spread)); // spread = wider detune
+
+  // ── Oscillators ──────────────────────────────────────────────────────
+  const oscs = [];
+  P.waves.forEach((type, i) => {
+    const o = AC.createOscillator();
+    o.type = type;
+    o.frequency.value = fund * (1 + shapedDetune[i] * 0.0006);
+    oscs.push(o);
+  });
+
+  // ── Sub-octave for accent (reedy) ─────────────────────────────────────
+  let subOsc = null;
+  if (idx === 3) {
+    subOsc = AC.createOscillator();
+    subOsc.type = 'square';
+    subOsc.frequency.value = fund * 0.5;
+  }
+
+  // ── Filters ───────────────────────────────────────────────────────────
+  const bp = AC.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = fund * P.bpFreqMult;
+  bp.Q.value = shapedBpQ;
+
+  const lp = AC.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = shapedLpFreq;
+  lp.Q.value = 0.7;
+
+  // ── Wing-beat AM ──────────────────────────────────────────────────────
+  const wingOsc  = AC.createOscillator();
+  wingOsc.frequency.value = fund * 0.98;
+  const wingGain = AC.createGain();
+  wingGain.gain.value = P.wingDepth;
+
+  // ── Wobble ────────────────────────────────────────────────────────────
+  const wobOsc  = AC.createOscillator();
+  wobOsc.frequency.value = shapedWobRate + Math.random() * 2;
+  const wobGain = AC.createGain();
+  wobGain.gain.value = shapedWobD;
+
+  // ── Noise ─────────────────────────────────────────────────────────────
+  const noiseLen = AC.sampleRate * 2;
+  const noiseBuf = AC.createBuffer(1, noiseLen, AC.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i=0; i<noiseLen; i++) nd[i] = Math.random()*2-1;
+  const noiseSrc = AC.createBufferSource();
+  noiseSrc.buffer = noiseBuf; noiseSrc.loop = true;
+  const noiseBP = AC.createBiquadFilter();
+  noiseBP.type = 'bandpass';
+  noiseBP.frequency.value = fund * P.noiseMult;
+  noiseBP.Q.value = P.noiseQ;
+  const noiseGain = AC.createGain();
+  noiseGain.gain.value = P.noiseAmt * (1 + curve * 0.5); // curved = grittier
+  noiseSrc.connect(noiseBP); noiseBP.connect(noiseGain);
+
+  // ── Mixer + chain ─────────────────────────────────────────────────────
+  const mixer = AC.createGain();
+  mixer.gain.value = P.mixGain;
+  oscs.forEach(o => o.connect(mixer));
+  if (subOsc) { const sg = AC.createGain(); sg.gain.value=0.4; subOsc.connect(sg); sg.connect(mixer); }
+  mixer.connect(bp); bp.connect(lp);
+
+  // ── Envelope ──────────────────────────────────────────────────────────
+  const env = AC.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.linearRampToValueAtTime(0.08, t + 0.14);
+  wingOsc.connect(wingGain); wingGain.connect(env.gain);
+  wobOsc.connect(wobGain);   wobGain.connect(env.gain);
+  lp.connect(env);
+  noiseGain.connect(env);
+  env.connect(AC.destination);
+
+  oscs.forEach(o => o.start(t));
+  wingOsc.start(t); wobOsc.start(t); noiseSrc.start(t);
+  if (subOsc) subOsc.start(t);
+
+  touchVoice = { oscs, subOsc, env, wingOsc, wobOsc, lp, bp, noiseSrc, noiseBP, _fund:fund, _P:P };
+}
+
+// Retune the active touch voice to a new fundamental — smooth glide
+function retuneTouchVoice(newFund) {
+  if (!touchVoice || !AC) return;
+  const t = AC.currentTime;
+  const { oscs, wingOsc, noiseBP } = touchVoice;
+  const detunes = [0, +4, -5];
+  oscs.forEach((o, i) => {
+    const f = newFund * (1 + detunes[i] * 0.0006);
+    o.frequency.setTargetAtTime(f, t, 0.04); // glide time constant ~40ms
+  });
+  wingOsc.frequency.setTargetAtTime(newFund * 0.98, t, 0.04);
+  if (noiseBP) noiseBP.frequency.setTargetAtTime(newFund * 1.1, t, 0.04);
+  touchVoice._fund = newFund;
+}
+
+function stopTouchVoice() {
+  if (!touchVoice || !AC) return;
+  const t = AC.currentTime;
+  const { oscs, subOsc, env, wingOsc, wobOsc, noiseSrc } = touchVoice;
+  env.gain.cancelScheduledValues(t);
+  env.gain.setValueAtTime(env.gain.value, t);
+  env.gain.linearRampToValueAtTime(0.0001, t + 0.22);
+  const stopT = t + 0.30;
+  oscs.forEach(o => o.stop(stopT));
+  if (subOsc) subOsc.stop(stopT);
+  wingOsc.stop(stopT);
+  wobOsc.stop(stopT);
+  noiseSrc.stop(stopT);
+  touchVoice = null;
+}
+
+// Check if pointer is near any drawn spline; if so spawn a disturbance
+let lastDisturbTime = 0;
+let isOnBranch = false;
+
+function checkLineHit(W, H) {
+  if (!pointer.down && !pointer.moved) return;
+  pointer.moved = false; // consumed
+  const now = performance.now();
+  const px = pointer.x, py = pointer.y;
+  const hitRadius = Math.min(W, H) * 0.055;
+
+  let hit = false;
+
+  ikebanas.forEach(ik => {
+    if (!ik.startTime || hit) return;
+    const elapsed = (now - ik.startTime) / 1000;
+    ik.branches.forEach((br, bi) => {
+      if (hit) return;
+      const prog = easeOut5(Math.min(Math.max((elapsed - br.delay) / br.duration, 0), 1));
+      if (prog < 0.05) return;
+      const full = buildSpline(br.cps.map(([x,y])=>[x*W, y*H]), 140);
+      const n    = Math.floor(full.length * prog);
+      for (let i=0; i<n; i+=8) {
+        const dx = full[i][0]-px, dy = full[i][1]-py;
+        if (dx*dx+dy*dy < hitRadius*hitRadius) {
+          hit = true;
+          // Spawn visual disturbance (throttled)
+          if (now - lastDisturbTime > 60) {
+            const splineT = i / (full.length-1);
+            disturbances.push({ created:now, branchIdx:bi, splineT, amp:hitRadius*0.55, ikRef:ik });
+            lastDisturbTime = now;
+          }
+          // splineT: 0=root 1=tip — maps to pitch like a string
+          const splineT = i / (full.length - 1);
+          // Map position along branch to frequency:
+          // root (0) = lower note, tip (1) = higher note
+          // Each branch has its own base pitch range derived from its color brightness
+          const basePitch = 100 + br.color[0] * 80;      // 100–180 Hz per branch
+          const newFund   = basePitch * (1 + splineT * 1.5); // 1x at root → 2.5x at tip
+
+          if (!isOnBranch) {
+            // Compute branch geometry for personality shaping
+            const cps = br.cps;
+            // curvature: deviation of mid-point from straight line (normalised)
+            const straight = Math.sqrt(Math.pow(cps[cps.length-1][0]-cps[0][0],2)+Math.pow(cps[cps.length-1][1]-cps[0][1],2));
+            let maxDev = 0;
+            cps.forEach(p => {
+              const t2 = (p[0]-cps[0][0])/(cps[cps.length-1][0]-cps[0][0]+0.001);
+              const lx = cps[0][0]+(cps[cps.length-1][0]-cps[0][0])*t2;
+              const ly = cps[0][1]+(cps[cps.length-1][1]-cps[0][1])*t2;
+              maxDev = Math.max(maxDev, Math.sqrt(Math.pow(p[0]-lx,2)+Math.pow(p[1]-ly,2)));
+            });
+            const curvature  = Math.min(1, maxDev / (straight * 0.5 + 0.001));
+            const brLen      = Math.min(1, straight / Math.min(W, H));
+            const angleSpread= br.shoots.length > 0
+              ? Math.min(1, br.shoots.reduce((s,sh)=>s+Math.abs(sh.angle),0)/br.shoots.length / Math.PI)
+              : 0.3;
+            const geom = { idx:bi, curvature, length:brLen, angleSpread };
+            startTouchVoice(Math.atan2(py-H*0.5, px-W*0.5), br.color, geom);
+            if (touchVoice) touchVoice._fund = newFund;
+          }
+          // Always retune to current finger position along the string
+          retuneTouchVoice(newFund);
+          // Drone LFO surge
+          if (AC && droneOscs.length && now - lastDisturbTime <= 80) {
+            const t = AC.currentTime;
+            const surgeRate  = (ik._lfoRateBase||0.06) * 6;
+            const surgeDepth = br.color[0] * 0.08;
+            droneOscs.forEach((d,di) => {
+              d.lfo.frequency.setTargetAtTime(surgeRate*(0.8+di*0.1), t, 0.05);
+              d.lfo.frequency.setTargetAtTime((ik._lfoRateBase||0.06)*(0.7+di*0.12), t+0.8, 0.4);
+              d.lfoG.gain.setTargetAtTime(d.baseFreq*0.018*surgeDepth*(0.6+di*0.1), t, 0.04);
+              d.lfoG.gain.setTargetAtTime(d.baseFreq*0.0018*(ik._lfoDepthMult||1)*(0.6+di*0.1), t+1.0, 0.5);
+            });
+          }
+          break;
+        }
+      }
+    });
+  });
+
+  // ── Check shoot proximity (independent of branch hit) ─────────────────
+  if (pointer.down) {
+    const shootRadius = Math.min(W, H) * 0.04;
+    shootRegistry.forEach(reg => {
+      if (now - reg.lastHit < 300) return; // per-shoot cooldown
+      if (!reg.pts || reg.pts.length === 0) return;
+      for (let i=0; i<reg.pts.length; i+=4) {
+        const dx = reg.pts[i][0]-px, dy = reg.pts[i][1]-py;
+        if (dx*dx+dy*dy < shootRadius*shootRadius) {
+          reg.lastHit = now;
+          playShimmer(reg.angle, reg.branchIdx);
+          break;
+        }
+      }
+    });
+  }
+
+  // Release looped sound when finger leaves branch
+  if (!hit && isOnBranch) stopTouchVoice();
+  isOnBranch = hit;
+
+  // Also stop when pointer is lifted
+  if (!pointer.down && touchVoice) stopTouchVoice();
+}
+
+// ── Ripples ───────────────────────────────────────────────────────────────
+function drawRipples(cx, cy, W, phase, gAlpha) {
+  for (let i=0; i<4; i++) {
+    const rp = (phase*0.25 + i/4) % 1;
+    const r  = rp * W * 0.10;
+    const a  = (1-rp) * 0.06 * gAlpha;
+    if (a < 0.004) continue;
+    setColor(0.65,0.55,0.35, a);
+    const pts = [];
+    for (let j=0; j<=40; j++) {
+      const ang = (j/40)*Math.PI*2;
+      pts.push([cx+Math.cos(ang)*r, cy+Math.sin(ang)*r*0.14]);
+    }
+    thickPolyline(pts, 0.6);
+  }
+}
+
+// ── Render one ikebana ────────────────────────────────────────────────────
+function renderIkebana(ik, now, W, H) {
+  if (!ik.startTime) ik.startTime = now;
+  const elapsed = (now - ik.startTime) / 1000;
+  ik.fadeIn = Math.min(1, elapsed / 0.7);
+  let gAlpha = ik.fadeIn;
+  if (ik._dying) {
+    const d = (now - ik._deathTime) / 1000;
+    gAlpha = Math.max(0, 1 - d/1.2);
+    if (gAlpha <= 0) { ik._dead=true; return; }
+  }
+
+  // ── Live drone morphing tied to draw progress ───────────────────────────
+  // Only drive drone from the active (non-dying) ikebana
+  if (!ik._dying && AC && droneOscs.length) {
+    // Average branch draw progress (0→1)
+    const avgProg = ik.branches.reduce((sum, br) => {
+      return sum + easeOut5(Math.min(Math.max((elapsed - br.delay) / br.duration, 0), 1));
+    }, 0) / ik.branches.length;
+
+    // Scale each drone partial's gain by draw progress — drone opens as lines grow
+    const t = AC.currentTime;
+    droneOscs.forEach((d, i) => {
+      // Each partial enters with a slight stagger based on index
+      const partialProg = Math.min(1, Math.max(0, (avgProg - i * 0.04) / 0.85));
+      const targetGain  = d.baseGain * partialProg * (ik['_gainScale' + i] || 1.0);
+      // Smooth with a short ramp every frame (avoids zipper noise)
+      d.gNode.gain.setTargetAtTime(Math.max(0.0001, targetGain), t, 0.08);
+    });
+
+    // Also sweep the filter-like quality: morph frequency as drawing completes
+    if (ik._shinEndY !== undefined) {
+      const morphT = avgProg; // 0=start, 1=fully drawn
+      // Drone root slides from 2x its final target to target as composition completes
+      droneOscs.forEach((d, i) => {
+        const finalFreq = Math.max(20, d.baseFreq * (ik['_freqScale' + i] || 1.0));
+        const startFreq = finalFreq * 1.4;
+        const curFreq   = startFreq + (finalFreq - startFreq) * morphT;
+        d.osc.frequency.setTargetAtTime(curFreq, t, 0.3);
+      });
+    }
+  }
+
+  gl.uniform2f(uRes, W, H);
+
+  drawRipples(ik.ox*W, ik.oy*H, W, ripplePhase, gAlpha);
+
+  ik.branches.forEach((br, bi) => {
+    const prog = easeOut5(Math.min(Math.max((elapsed - br.delay) / br.duration, 0), 1));
+    if (prog <= 0) return;
+
+    const full = buildSpline(br.cps.map(([x,y]) => [x*W, y*H]), 140);
+    const n    = Math.max(2, Math.floor(full.length * prog));
+    const sub  = full.slice(0, n);
+    const [r,g,b] = br.color;
+    const a = br.alpha * gAlpha;
+
+    // Apply disturbance displacements to sub
+    const drawPts = sub.map((pt, pi) => {
+      let ox2 = 0, oy2 = 0;
+      const tNorm = pi / (sub.length - 1 || 1);
+      disturbances.forEach(dis => {
+        if (dis.ikRef !== ik || dis.branchIdx !== bi) return;
+        const age    = (now - dis.created) / 1000;
+        const decay  = Math.max(0, 1 - age / 1.2);
+        if (decay <= 0) return;
+        // Wave travels along spline from hit point
+        const wave   = Math.sin((tNorm - dis.splineT) * 18 - age * 8) * decay;
+        const dist   = Math.abs(tNorm - dis.splineT);
+        const env    = Math.exp(-dist * 12) * decay;
+        // Perpendicular nudge (normal to spline direction)
+        const prev2  = sub[Math.max(pi-1,0)];
+        const next2  = sub[Math.min(pi+1,sub.length-1)];
+        const dxs    = next2[0]-prev2[0], dys = next2[1]-prev2[1];
+        const dlen   = Math.sqrt(dxs*dxs+dys*dys)||1;
+        ox2 += (-dys/dlen) * wave * env * dis.amp;
+        oy2 += ( dxs/dlen) * wave * env * dis.amp;
+      });
+      return [pt[0]+ox2, pt[1]+oy2];
+    });
+
+    // core line
+    setColor(r,g,b, a);
+    thickPolyline(drawPts, br.width * Math.min(devicePixelRatio, 2));
+
+    // glow
+    setColor(r,g,b, a * 0.15);
+    thickPolyline(drawPts, br.width * Math.min(devicePixelRatio, 2) * 4);
+
+    // shoots
+    br.shoots.forEach(sh => {
+      const shProg = easeOut3(Math.min(Math.max((elapsed - sh.delay)/0.9, 0), 1));
+      if (shProg <= 0) return;
+      // shimmer sound once per shoot, when it first appears
+      if (shProg > 0.02 && !shimmeredShoots.has(sh)) {
+        shimmeredShoots.add(sh);
+        playShimmer(sh.angle, bi);
+      }
+      const base = splinePt(full, sh.t);
+      const ex = base[0] + Math.cos(sh.angle)*sh.len*W*shProg;
+      const ey = base[1] + Math.sin(sh.angle)*sh.len*H*shProg;
+      const mid = [
+        base[0] + (ex-base[0])*0.5 + rnd(-4,4),
+        base[1] + (ey-base[1])*0.5 + rnd(-4,4),
+      ];
+      const spts = buildSpline([base, mid, [ex,ey]], 40);
+      setColor(r,g,b, a*0.65);
+      thickPolyline(spts, Math.max(0.6, br.width*0.55*Math.min(devicePixelRatio,2)));
+
+      // Register shoot points for touch detection
+      // Reuse existing entry or create new one keyed by sh object
+      let reg = shootRegistry.find(r2 => r2.sh === sh);
+      if (!reg) {
+        reg = { sh, pts: [], angle: sh.angle, lastHit: 0, branchIdx: bi };
+        shootRegistry.push(reg);
+      }
+      reg.pts = spts; // update world positions every frame
+    });
+
+    // bud
+    if (br.budR > 0) {
+      const budProg = easeOut3(Math.min(Math.max((elapsed - br.budDelay)/0.5, 0), 1));
+      if (budProg > 0) {
+        const tip = splinePt(full, 1.0);
+        const [br2,bg2,bb2] = br.color.map(v => Math.min(1, v+0.1));
+        setColor(br2,bg2,bb2, 0.75*budProg*gAlpha);
+        drawCirclePts(tip[0],tip[1], br.budR*budProg*Math.min(devicePixelRatio,2));
+        setColor(br2,bg2,bb2, 0.95*budProg*gAlpha);
+        drawCirclePts(tip[0],tip[1], br.budR*0.28*budProg*Math.min(devicePixelRatio,2));
+      }
+    }
+  });
+}
+
+// ── Petals ────────────────────────────────────────────────────────────────
+const petals = Array.from({length:11}, () => ({
+  x: 0.12+Math.random()*0.76,
+  y: -0.05-Math.random()*0.45,
+  vy: 0.00013+Math.random()*0.00010,
+  vx: (Math.random()-0.5)*0.00006,
+  phase: Math.random()*Math.PI*2,
+  r: 1.1+Math.random()*1.4,
+  alpha: 0.09+Math.random()*0.14,
+}));
+
+// ── Main loop ─────────────────────────────────────────────────────────────
+function render(ts) {
+  const W = canvas.width, H = canvas.height;
+  gl.uniform2f(uRes, W, H);
+  gl.clearColor(0.024, 0.019, 0.012, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  ripplePhase = ts / 1000;
+
+  // Subtle bg verticals
+  for (let i=0; i<7; i++) {
+    const x = W*(0.08+i*0.13);
+    setColor(0.50,0.43,0.26, 0.007+0.004*Math.sin(ts*0.0002+i));
+    thickPolyline([[x,0],[x,H]], 0.5);
+  }
+
+  // Prune old disturbances
+  const dNow = performance.now();
+  for (let i = disturbances.length-1; i>=0; i--) {
+    if (dNow - disturbances[i].created > 1300) disturbances.splice(i,1);
+  }
+  // Clear shoot registry each frame — rebuilt during render
+  shootRegistry.length = 0;
+  checkLineHit(W, H);
+
+  ikebanas.forEach(ik => renderIkebana(ik, ts, W, H));
+  if (ikebanas.length > 1) ikebanas = ikebanas.filter(ik => !ik._dead);
+
+  petals.forEach(p => {
+    p.x += p.vx + Math.sin(ts*0.0008+p.phase)*0.00002;
+    p.y += p.vy;
+    if (p.y > 1.08) { p.y=-0.04; p.x=0.10+Math.random()*0.80; }
+    setColor(0.80,0.72,0.52, p.alpha);
+    drawCirclePts(p.x*W, p.y*H, p.r*Math.min(devicePixelRatio,2));
+  });
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

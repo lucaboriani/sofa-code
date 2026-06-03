@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bindu — The Three Gunas</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#060003; overflow:hidden; width:100vw; height:100vh; touch-action:none; }
+canvas { display:block; }
+#ui {
+  position:fixed; bottom:26px; left:50%; transform:translateX(-50%);
+  display:flex; gap:26px;
+  font-family:'Georgia',serif; font-size:10px; letter-spacing:.22em;
+  color:rgba(255,255,255,.22); text-transform:uppercase; pointer-events:none;
+}
+.guna { display:flex; align-items:center; gap:7px; }
+.dot  { width:5px; height:5px; border-radius:50%; }
+#title {
+  position:fixed; top:26px; left:50%; transform:translateX(-50%);
+  font-family:'Georgia',serif; font-size:12px; letter-spacing:.35em;
+  color:rgba(255,255,255,.14); text-transform:uppercase; pointer-events:none;
+  white-space:nowrap;
+}
+#overlay {
+  position:fixed; inset:0; z-index:20;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;
+  background:rgba(6,0,3,.9); cursor:pointer; transition:opacity .9s;
+}
+#overlay .om   { font-family:'Georgia',serif; font-size:52px; color:rgba(255,210,140,.7);
+                 letter-spacing:.05em; animation:glow 3.2s ease-in-out infinite; }
+#overlay .hint { font-family:'Georgia',serif; font-size:11px; letter-spacing:.28em;
+                 color:rgba(255,255,255,.35); text-transform:uppercase; }
+@keyframes glow { 0%,100%{opacity:.42;transform:scale(1)} 50%{opacity:.82;transform:scale(1.06)} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title">Bindu · The Origin</div>
+<div id="ui">
+  <div class="guna"><div class="dot" style="background:#111;border:1px solid #444"></div>Tamas</div>
+  <div class="guna"><div class="dot" style="background:#c03020"></div>Rajas</div>
+  <div class="guna"><div class="dot" style="background:rgba(255,255,255,.82)"></div>Sattva</div>
+</div>
+<div id="overlay">
+  <div class="om">ॐ</div>
+  <div class="hint">Touch to begin</div>
+</div>
+<script>
+// ── WebGL ─────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl',{antialias:true,alpha:false});
+gl.getExtension('OES_element_index_uint');
+let W=0,H=0;
+function resize(){ W=canvas.width=window.innerWidth; H=canvas.height=window.innerHeight; gl.viewport(0,0,W,H); }
+window.addEventListener('resize',resize); resize();
+
+// ── Shaders ───────────────────────────────────────────────────────────────────
+const VS=`attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uMVP;varying vec4 vC;
+void main(){gl_Position=uMVP*vec4(aPos,1.);vC=aCol;}`;
+const FS=`precision mediump float;varying vec4 vC;void main(){gl_FragColor=vC;}`;
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);return x;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));
+gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+gl.linkProgram(prog);gl.useProgram(prog);
+const LP=gl.getAttribLocation(prog,'aPos');
+const LC=gl.getAttribLocation(prog,'aCol');
+const LM=gl.getUniformLocation(prog,'uMVP');
+
+// ── Math ──────────────────────────────────────────────────────────────────────
+function persp(fov,asp,n,f){
+  const t=1/Math.tan(fov*.5),nf=1/(n-f);
+  return new Float32Array([t/asp,0,0,0,0,t,0,0,0,0,(f+n)*nf,-1,0,0,2*f*n*nf,0]);
+}
+function lookAt(ex,ey,ez){
+  let zx=ex,zy=ey,zz=ez;
+  let zl=Math.sqrt(zx*zx+zy*zy+zz*zz)||1; zx/=zl;zy/=zl;zz/=zl;
+  // cross([0,1,0], z) — if z≈up use x-axis
+  let xx,xy,xz;
+  if(Math.abs(zy)>.99){xx=1;xy=0;xz=0;}
+  else{xx=-zz;xy=0;xz=zx; let xl=Math.sqrt(xx*xx+xz*xz)||1;xx/=xl;xz/=xl;}
+  const yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+  return new Float32Array([
+    xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,
+    -(xx*ex+xy*ey+xz*ez),-(yx*ex+yy*ey+yz*ez),-(zx*ex+zy*ey+zz*ez),1]);
+}
+function mul4(a,b){
+  const r=new Float32Array(16);
+  for(let c=0;c<4;c++)for(let row=0;row<4;row++){
+    let v=0;for(let k=0;k<4;k++)v+=a[row+k*4]*b[k+c*4];r[row+c*4]=v;
+  }
+  return r;
+}
+
+// ── Camera ────────────────────────────────────────────────────────────────────
+const cam={yaw:0,pitch:.22,dist:20,vy:.18,vp:0};
+const FRIC=.995,DSENS=.006;
+let isDrag=false,dX=0,dY=0,dDX=0,dDY=0;
+// Smoothed drag velocity for audio (pixels/frame, low-passed)
+let sDX=0,sDY=0;
+
+canvas.addEventListener('mousedown',e=>{isDrag=true;dX=e.clientX;dY=e.clientY;dDX=dDY=0;});
+window.addEventListener('mousemove',e=>{
+  if(!isDrag)return;
+  dDX=e.clientX-dX;dDY=e.clientY-dY;
+  cam.yaw-=dDX*DSENS;cam.pitch-=dDY*DSENS*.55;
+  cam.pitch=Math.max(-1.35,Math.min(1.35,cam.pitch));
+  dX=e.clientX;dY=e.clientY;
+});
+window.addEventListener('mouseup',()=>{
+  if(isDrag){cam.vy=-dDX*DSENS*60;cam.vp=-dDY*DSENS*.55*60;}
+  isDrag=false; dDX=dDY=0;
+});
+canvas.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.max(0.3,Math.min(60,cam.dist+e.deltaY*.012));},{passive:false});
+
+let touches={},pinch0=null;
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches) touches[t.identifier]={x:t.clientX,y:t.clientY,dx:0,dy:0};
+  if(e.touches.length===2){const a=e.touches[0],b=e.touches[1];pinch0=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);}
+  if(e.touches.length===1){dDX=dDY=0;}
+},{passive:false});
+canvas.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===2){
+    const a=e.touches[0],b=e.touches[1],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    if(pinch0!==null)cam.dist=Math.max(0.3,Math.min(60,cam.dist-(d-pinch0)*0.12));
+    pinch0=d;return;
+  }
+  if(e.touches.length===1){
+    const t=e.touches[0],p=touches[t.identifier];
+    if(p){
+      dDX=t.clientX-p.x;dDY=t.clientY-p.y;
+      p.dx=dDX;p.dy=dDY;
+      cam.yaw-=dDX*DSENS;cam.pitch-=dDY*DSENS*.55;
+      cam.pitch=Math.max(-1.35,Math.min(1.35,cam.pitch));
+      p.x=t.clientX;p.y=t.clientY;
+    }
+  }
+},{passive:false});
+canvas.addEventListener('touchend',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p=touches[t.identifier];
+    if(p&&e.touches.length===0){cam.vy=-p.dx*DSENS*60;cam.vp=-p.dy*DSENS*.55*60;}
+    delete touches[t.identifier];
+  }
+  if(e.touches.length<2)pinch0=null;
+  if(e.touches.length===0){dDX=dDY=0;}
+},{passive:false});
+
+// ── Lines ─────────────────────────────────────────────────────────────────────
+const NUM=1200,SEGS=80,VPL=SEGS+1,FS7=7;
+const vtx=new Float32Array(NUM*VPL*FS7);
+const rng=Math.random.bind(Math);
+
+function makeTemplate(){
+  let ta=rng(),ra=rng(),sa=rng(),tot=ta+ra+sa; ta/=tot;ra/=tot;sa/=tot;
+  const th=rng()*Math.PI*2,ph=Math.acos(2*rng()-1);
+  return{ta,ra,sa,
+    dx:Math.sin(ph)*Math.cos(th),dy:Math.sin(ph)*Math.sin(th),dz:Math.cos(ph),
+    maxLen:0.5+rng()*rng()*4.2,
+    cr:Math.min(1,ta*.06+ra*.88+sa*1.0),
+    cg:Math.min(1,ta*.02+ra*.13+sa*1.0),
+    cb:Math.min(1,ta*.10+ra*.10+sa*1.0),
+    baseA:.12+sa*.46+ra*.24};
+}
+function resetLine(ln){Object.assign(ln,makeTemplate());ln.t=0;ln.life=3+rng()*7;}
+
+const lines=[];
+for(let i=0;i<NUM;i++){
+  const l=makeTemplate(); l.t=rng()*(3+rng()*7); l.life=3+rng()*7;
+  lines.push(l);
+}
+
+function updateGeometry(){
+  for(let l=0;l<NUM;l++){
+    const ln=lines[l];
+    const p=Math.min(ln.t/ln.life,1);
+
+    // The tip travels the FULL life from 0 → travelDist (always moving outward)
+    // travelDist is generous so the comet fully exits the visible field
+    const travelDist = ln.maxLen * 1.6;
+    const tipDist  = travelDist * p;
+
+    // Tail is a fixed world-length behind the tip, clamped to 0
+    const tailLen  = ln.maxLen * 0.55;
+    const tailDist = Math.max(0, tipDist - tailLen);
+
+    // No global fade — line dies naturally when tail has left bindu far behind.
+    // Alpha only: comet trail (bright tip, dark root) + birth ramp
+    const birthRamp = Math.min(p / 0.08, 1.0);  // sharp fade-in at birth
+
+    for(let seg=0;seg<=SEGS;seg++){
+      const u  = seg / SEGS;   // 0 = tail root, 1 = tip
+      const di = tailDist + u * (tipDist - tailDist);
+
+      let px=ln.dx*di, py=ln.dy*di, pz=ln.dz*di;
+      py += ln.ta*di*di*.65;   // tamas: pull DOWN (dark sinks)
+      py -= ln.sa*di*di*.45;   // sattva: rise UP (light ascends)
+      if(ln.ra>.03){
+        const ang=ln.ra*di*3+ln.t*ln.ra*2.2;
+        const ca=Math.cos(ang),si=Math.sin(ang);
+        const nx=px*ca-pz*si,nz=px*si+pz*ca; px=nx;pz=nz;
+        const ro=ln.ra*di*.22;
+        px+=Math.cos(ang*1.3)*ro; py+=Math.sin(ang*.7)*ro*.2;
+      }
+
+      // Bright tip, trail fades toward root — u² gives comet gradient
+      const alpha = Math.min(ln.baseA * u * u * birthRamp, 1.0);
+
+      const vi=(l*VPL+seg)*FS7;
+      vtx[vi]=px;vtx[vi+1]=py;vtx[vi+2]=pz;
+      vtx[vi+3]=ln.cr;vtx[vi+4]=ln.cg;vtx[vi+5]=ln.cb;vtx[vi+6]=alpha;
+    }
+  }
+}
+
+const idxArr=new Uint32Array(NUM*SEGS*2);
+{let p=0;for(let l=0;l<NUM;l++){const b=l*VPL;for(let s=0;s<SEGS;s++){idxArr[p++]=b+s;idxArr[p++]=b+s+1;}}}
+const idxBuf=gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,idxBuf);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idxArr,gl.STATIC_DRAW);
+const vtxBuf=gl.createBuffer();
+
+function uploadGeometry(){
+  gl.bindBuffer(gl.ARRAY_BUFFER,vtxBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,vtx,gl.DYNAMIC_DRAW);
+  const B=FS7*4;
+  gl.enableVertexAttribArray(LP);gl.vertexAttribPointer(LP,3,gl.FLOAT,false,B,0);
+  gl.enableVertexAttribArray(LC);gl.vertexAttribPointer(LC,4,gl.FLOAT,false,B,12);
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+let audioReady=false;
+let aLPF=null,aDetune=null,aAC=null;
+let aWalkInterval=null,aWalkers=null,aBPF=null,aNoiseGain=null,aNoiseHPF=null,aNoiseColor=null;
+
+function startAudio(){
+  if(audioReady)return; audioReady=true;
+  const AC=new(window.AudioContext||window.webkitAudioContext)();
+  aAC=AC;
+
+  // Master — quiet
+  const master=AC.createGain();
+  master.gain.setValueAtTime(0,AC.currentTime);
+  master.gain.linearRampToValueAtTime(0.22,AC.currentTime+5);
+  master.connect(AC.destination);
+
+  // Long cave reverb (6s)
+  const conv=AC.createConvolver();
+  const irLen=AC.sampleRate*6,ir=AC.createBuffer(2,irLen,AC.sampleRate);
+  for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<irLen;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/irLen,1.35);}
+  conv.buffer=ir;
+  const convG=AC.createGain();convG.gain.value=0.65;
+  conv.connect(convG);convG.connect(master);
+
+  // Dry
+  const dry=AC.createGain();dry.gain.value=0.35;dry.connect(master);
+
+  // Low-pass — drag horizontal controls cutoff
+  const lpf=AC.createBiquadFilter();
+  lpf.type='lowpass';lpf.frequency.value=380;lpf.Q.value=0.5;
+  lpf.connect(dry);lpf.connect(conv);
+  aLPF=lpf;
+
+  // ConstantSource for global pitch detune — drag vertical controls it
+  const det=AC.createConstantSource();
+  det.offset.value=0;det.start();
+  aDetune=det.offset;
+
+  // Root: 55 Hz (A1) — very deep
+  const ROOT=55;
+
+  const voices=[
+    {d:0,a:.30},{d:-4,a:.22},{d:5,a:.20},{d:-8,a:.17},
+    {d:13,a:.14},{d:-15,a:.11},{d:20,a:.09},{d:-23,a:.08}
+  ];
+  const harmonics=[
+    {r:1,g:.58},{r:2,g:.30},{r:3,g:.20},{r:4,g:.09},{r:5,g:.14},{r:6,g:.06},{r:8,g:.04}
+  ];
+
+  voices.forEach(({d,a})=>{
+    const vg=AC.createGain();vg.gain.value=a;vg.connect(lpf);
+    harmonics.forEach(({r,g})=>{
+      const osc=AC.createOscillator();osc.type='sine';osc.frequency.value=ROOT*r;osc.detune.value=d;
+      // per-voice vibrato
+      const lfo=AC.createOscillator();lfo.frequency.value=0.13+Math.random()*.09;
+      const lg=AC.createGain();lg.gain.value=0.8+Math.random()*.6;
+      lfo.connect(lg);lg.connect(osc.detune);lfo.start();
+      // global detune
+      det.connect(osc.detune);
+      const hg=AC.createGain();hg.gain.value=g;
+      osc.connect(hg);hg.connect(vg);osc.start();
+    });
+  });
+
+  // Sub: 27.5 Hz
+  const sub=AC.createOscillator();sub.type='sine';sub.frequency.value=ROOT*.5;
+  const subG=AC.createGain();subG.gain.value=0.12;
+  det.connect(sub.detune);
+  sub.connect(subG);subG.connect(master);sub.start();
+
+  // Slow breath swell ~8s
+  const sw=AC.createOscillator();sw.frequency.value=0.12;
+  const swG=AC.createGain();swG.gain.value=0.05;
+  sw.connect(swG);swG.connect(master.gain);sw.start();
+
+  // ── Smoothed random (noise) modulator ──────────────────────────────────────
+  // Three independent slow random walkers, each targeting a new random value
+  // every 4–12 seconds and gliding toward it via exponential smoothing.
+  // They modulate: (1) filter cutoff offset, (2) master gain shimmer,
+  // (3) a second bandpass resonance that gives the "vowel wandering" quality.
+
+  // Bandpass for additional vowel colour
+  const bpf=AC.createBiquadFilter();
+  bpf.type='bandpass';bpf.frequency.value=220;bpf.Q.value=4.5;
+  // bpf sits in parallel with lpf, quieter
+  lpf.connect(bpf);
+  const bpG=AC.createGain();bpG.gain.value=0.12;
+  bpf.connect(bpG);bpG.connect(dry);bpG.connect(conv);
+
+  // Random walker state
+  const walkers=[
+    {cur:380, target:380, rate:0,  // filter freq
+     min:120, max:700,  smoothK:0.0004,  onTick:v=>{ const tt=aAC.currentTime; aLPF.frequency.setTargetAtTime(v,tt,1.2); }},
+    {cur:0.22,target:0.22,rate:0,  // master gain shimmer
+     min:0.16,max:0.26, smoothK:0.0003, onTick:v=>{ master.gain.setTargetAtTime(v,aAC.currentTime,2.5); }},
+    {cur:220, target:220, rate:0,  // bandpass centre
+     min:90,  max:480,  smoothK:0.0003, onTick:v=>{ bpf.frequency.setTargetAtTime(v,aAC.currentTime,1.8); }},
+  ];
+
+  // Schedule next random target for each walker
+  function scheduleWalker(w){
+    w.target = w.min + Math.random()*(w.max-w.min);
+    // next retarget in 4–14 seconds (expressed as samples drifting interval)
+    w.nextAt = aAC.currentTime + 4 + Math.random()*10;
+  }
+  walkers.forEach(scheduleWalker);
+
+  // Drive via setInterval (20 Hz is plenty — audio params smooth themselves)
+  const walkInterval=setInterval(()=>{
+    if(!aAC)return;
+    const now=aAC.currentTime;
+    walkers.forEach(w=>{
+      // Exponential glide toward target
+      w.cur += (w.target-w.cur)*0.08;
+      w.onTick(w.cur);
+      if(now>=w.nextAt) scheduleWalker(w);
+    });
+  }, 50);  // every 50ms
+  // Store so updateAudio can still override with drag on top
+  aWalkInterval=walkInterval;
+  aWalkers=walkers;
+  aBPF=bpf;
+
+  // ── Zoom-reactive white noise ───────────────────────────────────────────────
+  // AudioBufferSourceNode filled with white noise, looping.
+  // Filtered through a high-pass so it sounds like cosmic breath / air, not hiss.
+  const noiseLen = AC.sampleRate * 2;
+  const noiseBuf = AC.createBuffer(1, noiseLen, AC.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for(let i=0;i<noiseLen;i++) nd[i] = Math.random()*2-1;
+  const noiseNode = AC.createBufferSource();
+  noiseNode.buffer = noiseBuf;
+  noiseNode.loop = true;
+  noiseNode.start();
+
+  // High-pass at 800 Hz — removes rumble, keeps airy breath texture
+  const nhpf = AC.createBiquadFilter();
+  nhpf.type = 'highpass'; nhpf.frequency.value = 800; nhpf.Q.value = 0.7;
+  noiseNode.connect(nhpf);
+
+  // Gentle band-pass around 3 kHz — 'air' presence band
+  const nbpf = AC.createBiquadFilter();
+  nbpf.type = 'bandpass'; nbpf.frequency.value = 3000; nbpf.Q.value = 1.2;
+  nhpf.connect(nbpf);
+
+  const ng = AC.createGain();
+  ng.gain.value = 0;   // starts silent — zoom controls it
+  nbpf.connect(ng);
+  ng.connect(master);
+  aNoiseGain = ng.gain;
+  aNoiseHPF  = nhpf;    // drag horizontal → shift high-pass cutoff (texture)
+  aNoiseColor = nbpf;   // drag vertical   → shift bandpass centre (colour)
+}
+
+function updateAudio(vx,vy,zoom){
+  // zoom: cam.dist — high = far away (quiet noise), low = zoomed in (loud noise)
+  if(audioReady && aNoiseGain && zoom !== undefined){
+    const nt = Math.max(0, (9 - zoom) / (9 - 0.3));
+    const noiseAmt = Math.min(0.025, 0.025 * Math.pow(nt, 4));
+    aNoiseGain.setTargetAtTime(noiseAmt, aAC.currentTime, 0.6);
+    // Gesture modulates noise texture
+    if(aNoiseHPF && aNoiseColor){
+      const now = aAC.currentTime;
+      // Horizontal → sweep high-pass: right=airy(high cut), left=wind-like(low cut)
+      const hpTarget = Math.max(200, Math.min(4000, 800 + vx * 60));
+      aNoiseHPF.frequency.setTargetAtTime(hpTarget, now, 0.15);
+      // Vertical → shift bandpass colour: up=bright presence, down=dark rumble
+      const bpTarget = Math.max(800, Math.min(8000, 3000 - vy * 80));
+      aNoiseColor.frequency.setTargetAtTime(bpTarget, now, 0.15);
+    }
+  }
+  if(!audioReady||!aLPF)return;
+  const t=aAC.currentTime;
+  // Always apply — no threshold gate
+  // Horizontal drag → filter cutoff: wide range, very sensitive
+  const baseF = aWalkers ? aWalkers[0].cur : 380;
+  const targetF = Math.max(40, Math.min(1800, baseF + vx * 55));
+  aLPF.frequency.setTargetAtTime(targetF, t, 0.12);
+
+  // Vertical drag → pitch detune: ±200 cents (almost a whole tone up/down)
+  const targetD = Math.max(-200, Math.min(200, -vy * 11));
+  aDetune.setTargetAtTime(targetD, t, 0.18);
+
+  // Also push bandpass centre with horizontal — amplifies vowel shift
+  if(aBPF){
+    const baseB = aWalkers ? aWalkers[2].cur : 220;
+    const targetB = Math.max(60, Math.min(900, baseB + vx * 30));
+    aBPF.frequency.setTargetAtTime(targetB, t, 0.18);
+  }
+
+  // Vertical drag also nudges master gain — dragging down = quieter, up = louder
+  if(aWalkers){
+    const baseG = aWalkers[1].cur;
+    const targetG = Math.max(0.06, Math.min(0.40, baseG - vy * 0.008));
+    aWalkers[1].cur = targetG; // update walker so it glides from this new point
+  }
+}
+
+// ── Overlay ───────────────────────────────────────────────────────────────────
+const overlay=document.getElementById('overlay');
+function begin(){
+  startAudio();
+  overlay.style.opacity='0';overlay.style.pointerEvents='none';
+  setTimeout(()=>overlay.remove(),950);
+}
+overlay.addEventListener('click',begin);
+overlay.addEventListener('touchend',e=>{e.preventDefault();begin();},{passive:false});
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+let lastTS=null;
+
+function frame(ts){
+  requestAnimationFrame(frame);
+  const dt=(lastTS===null)?0.016:Math.min((ts-lastTS)*.001,.05);
+  lastTS=ts;
+
+  // Camera inertia
+  if(!isDrag){
+    cam.yaw+=cam.vy*dt;cam.pitch+=cam.vp*dt;
+    cam.pitch=Math.max(-1.35,Math.min(1.35,cam.pitch));
+    cam.vy*=FRIC;cam.vp*=FRIC;
+  }
+
+  // Smooth drag velocity for audio (exponential moving average)
+  sDX=sDX*.75+(isDrag?dDX:0)*.25;
+  sDY=sDY*.75+(isDrag?dDY:0)*.25;
+  updateAudio(sDX,sDY,cam.dist);
+
+  // MVP
+  const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch);
+  const ex=cam.dist*cp*Math.sin(cam.yaw);
+  const ey=cam.dist*sp;
+  const ez=cam.dist*cp*Math.cos(cam.yaw);
+  const mvp=mul4(persp(Math.PI/3.5,W/H,.05,120),lookAt(ex,ey,ez));
+  gl.uniformMatrix4fv(LM,false,mvp);
+
+  // Lines
+  for(let l=0;l<NUM;l++){
+    const ln=lines[l];
+    ln.t+=dt;
+    if(ln.t>=ln.life)resetLine(ln);
+  }
+  updateGeometry();
+  uploadGeometry();
+
+  // Draw
+  gl.clearColor(.023,0,.012,1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,idxBuf);
+  gl.drawElements(gl.LINES,NUM*SEGS*2,gl.UNSIGNED_INT,0);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
