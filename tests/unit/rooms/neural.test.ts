@@ -28,15 +28,53 @@ function makeProxyGL(): unknown {
   });
 }
 
-function makeCanvas(): HTMLCanvasElement {
+function makeCanvas(gl: unknown = makeProxyGL()): HTMLCanvasElement {
   const c = document.createElement('canvas');
   Object.defineProperty(c, 'clientWidth', { get: () => 400 });
   Object.defineProperty(c, 'clientHeight', { get: () => 300 });
+  (c as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture = () => {};
+  (c as unknown as { releasePointerCapture: (id: number) => void }).releasePointerCapture = () => {};
   c.getContext = ((type: string): unknown => {
-    if (type === 'webgl' || type === 'webgl2') return makeProxyGL();
+    if (type === 'webgl' || type === 'webgl2') return gl;
     return null;
   }) as typeof HTMLCanvasElement.prototype.getContext;
   return c;
+}
+
+/** Proxy GL that gives STATIC_DRAW a distinct value and counts static uploads. */
+function makeRecordingGL(): { gl: unknown; staticUploads: { count: number } } {
+  const STATIC_DRAW = 35044;
+  const staticUploads = { count: 0 };
+  const gl = new Proxy({}, {
+    get(_t, p) {
+      if (p === 'STATIC_DRAW') return STATIC_DRAW;
+      if (p === 'bufferData') {
+        return (_target: number, _data: unknown, usage: number) => {
+          if (usage === STATIC_DRAW) staticUploads.count++;
+        };
+      }
+      if (p === 'getShaderParameter' || p === 'getProgramParameter') return () => true;
+      if (p === 'getShaderInfoLog' || p === 'getProgramInfoLog') return () => '';
+      if (p === 'createShader' || p === 'createProgram' || p === 'createBuffer') return () => ({});
+      if (p === 'getUniformLocation' || p === 'getAttribLocation') return () => ({});
+      if (typeof p === 'string' && p === p.toUpperCase()) return 0;
+      return () => undefined;
+    }
+  });
+  return { gl, staticUploads };
+}
+
+function pointerEvt(type: string, x: number, y: number): MouseEvent {
+  return new MouseEvent(type, { clientX: x, clientY: y, bubbles: true });
+}
+
+function stubDesktopMedia(matches: boolean): void {
+  vi.stubGlobal('matchMedia', (q: string) => ({
+    matches: q.includes('hover') ? matches : false,
+    media: q,
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  }));
 }
 
 describe('neural', () => {
@@ -95,6 +133,61 @@ describe('neural', () => {
     const audio = createAudio(fake as unknown as AudioContext);
     await flush();
     expect(() => audio.tick!()).not.toThrow();
+  });
+
+  it('double tap regenerates the network geometry after the crossfade', async () => {
+    stubDesktopMedia(false);
+    const { gl, staticUploads } = makeRecordingGL();
+    const canvas = makeCanvas(gl);
+    const td = mount(canvas, { quality: 'full', audio: false });
+    const initial = staticUploads.count;
+    expect(initial).toBeGreaterThan(0); // pos + soma buffers uploaded on mount
+
+    canvas.dispatchEvent(pointerEvt('pointerdown', 100, 100));
+    canvas.dispatchEvent(pointerEvt('pointerup', 100, 100));
+    canvas.dispatchEvent(pointerEvt('pointerdown', 102, 101));
+    canvas.dispatchEvent(pointerEvt('pointerup', 102, 101));
+
+    // fade-out (~250ms) must elapse before the rebuild
+    await new Promise(r => setTimeout(r, 700));
+    expect(staticUploads.count).toBeGreaterThanOrEqual(initial * 2);
+    td.teardown();
+    vi.unstubAllGlobals();
+  });
+
+  it('two distant taps do not regenerate', async () => {
+    stubDesktopMedia(false);
+    const { gl, staticUploads } = makeRecordingGL();
+    const canvas = makeCanvas(gl);
+    const td = mount(canvas, { quality: 'full', audio: false });
+    const initial = staticUploads.count;
+
+    canvas.dispatchEvent(pointerEvt('pointerdown', 100, 100));
+    canvas.dispatchEvent(pointerEvt('pointerup', 100, 100));
+    canvas.dispatchEvent(pointerEvt('pointerdown', 300, 250));
+    canvas.dispatchEvent(pointerEvt('pointerup', 300, 250));
+
+    await new Promise(r => setTimeout(r, 700));
+    expect(staticUploads.count).toBe(initial);
+    td.teardown();
+    vi.unstubAllGlobals();
+  });
+
+  it('desktop hover: pointermove without buttons orbits without throwing, teardown removes listeners', () => {
+    stubDesktopMedia(true);
+    const canvas = makeCanvas();
+    const added = new Set<string>();
+    const removed = new Set<string>();
+    const origAdd = canvas.addEventListener.bind(canvas);
+    const origRemove = canvas.removeEventListener.bind(canvas);
+    canvas.addEventListener = ((t: string, l: EventListenerOrEventListenerObject, o?: unknown) => { added.add(t); origAdd(t, l, o as AddEventListenerOptions); }) as typeof canvas.addEventListener;
+    canvas.removeEventListener = ((t: string, l: EventListenerOrEventListenerObject, o?: unknown) => { removed.add(t); origRemove(t, l, o as EventListenerOptions); }) as typeof canvas.removeEventListener;
+
+    const td = mount(canvas, { quality: 'full', audio: false });
+    expect(() => canvas.dispatchEvent(pointerEvt('pointermove', 350, 50))).not.toThrow();
+    td.teardown();
+    for (const t of added) expect(removed.has(t)).toBe(true);
+    vi.unstubAllGlobals();
   });
 
   it('dispose() stops mic tracks so the recording indicator turns off', async () => {

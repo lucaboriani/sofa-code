@@ -172,11 +172,12 @@ const FS_LINE = `
   uniform vec3 uBaseColor;
   uniform vec3 uGlowColor;
   uniform float uAudio;
+  uniform float uFade;
   varying float vBright;
   void main(){
     float b   = clamp(vBright + uAudio * 0.35, 0.0, 1.0);
     vec3 col = mix(uBaseColor, uGlowColor, b);
-    float a   = mix(0.55, 1.0, b);
+    float a   = mix(0.55, 1.0, b) * uFade;
     gl_FragColor = vec4(col * a, a);
   }
 `;
@@ -197,10 +198,11 @@ const VS_PT = `
 const FS_PT = `
   precision mediump float;
   uniform vec3 uColor;
+  uniform float uFade;
   varying float vAlpha;
   void main(){
     float d = length(gl_PointCoord - 0.5) * 2.0;
-    float a = (1.0 - smoothstep(0.3, 1.0, d)) * vAlpha;
+    float a = (1.0 - smoothstep(0.3, 1.0, d)) * vAlpha * uFade;
     gl_FragColor = vec4(uColor, a);
   }
 `;
@@ -408,16 +410,16 @@ export const mount: RoomMount = (canvas, opts) => {
   const progLine = mkProg(gl, VS_LINE, FS_LINE);
   const progPt   = mkProg(gl, VS_PT,   FS_PT);
 
-  // ── Geometry ──
-  const geo = buildGeometry(neuronCount);
-  const { edges, nodes, somaPosF, somaSzF, edgeMainSegStart, edgeMainSegCount } = geo;
-  const posF32 = new Float32Array(geo.posArr);
-  const NSEG = geo.segEdge.length;
+  // ── Geometry (rebindable: double tap regenerates the map) ──
+  let geo = buildGeometry(neuronCount);
+  let { edges, nodes, somaPosF, somaSzF, edgeMainSegStart, edgeMainSegCount } = geo;
+  let posF32 = new Float32Array(geo.posArr);
+  let NSEG = geo.segEdge.length;
 
-  // ── Preallocated buffers (no allocs in tick) ──
-  const brightArr    = new Float32Array(NSEG * 2);
-  const brightSmooth = new Float32Array(NSEG * 2);
-  const somaAlDyn    = new Float32Array(nodes.length);
+  // ── Preallocated buffers (no allocs in tick; reallocated only on regen) ──
+  let brightArr    = new Float32Array(NSEG * 2);
+  let brightSmooth = new Float32Array(NSEG * 2);
+  let somaAlDyn    = new Float32Array(nodes.length);
   const MAX_IMP = 200;
   const impPosF  = new Float32Array(MAX_IMP * 3);
   const impSzF   = new Float32Array(MAX_IMP);
@@ -430,18 +432,20 @@ export const mount: RoomMount = (canvas, opts) => {
   // ── GL Buffers ──
   const posB    = gl.createBuffer()!;
   const brightB = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, posB);
-  gl.bufferData(gl.ARRAY_BUFFER, posF32, gl.STATIC_DRAW);
+  const somaPosB = gl.createBuffer()!;
+  const somaSzB = gl.createBuffer()!;
+
+  function uploadStaticGeometry(): void {
+    gl.bindBuffer(gl.ARRAY_BUFFER, posB);
+    gl.bufferData(gl.ARRAY_BUFFER, posF32, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, somaPosB);
+    gl.bufferData(gl.ARRAY_BUFFER, somaPosF, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, somaSzB);
+    gl.bufferData(gl.ARRAY_BUFFER, somaSzF, gl.STATIC_DRAW);
+  }
+  uploadStaticGeometry();
   gl.bindBuffer(gl.ARRAY_BUFFER, brightB);
   gl.bufferData(gl.ARRAY_BUFFER, brightArr, gl.DYNAMIC_DRAW);
-
-  const somaPosB = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, somaPosB);
-  gl.bufferData(gl.ARRAY_BUFFER, somaPosF, gl.STATIC_DRAW);
-
-  const somaSzB = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, somaSzB);
-  gl.bufferData(gl.ARRAY_BUFFER, somaSzF, gl.STATIC_DRAW);
 
   const somaAlB  = gl.createBuffer()!;
   const impPosB  = gl.createBuffer()!;
@@ -452,7 +456,7 @@ export const mount: RoomMount = (canvas, opts) => {
   const burstAlB  = gl.createBuffer()!;
 
   // Reusable scratch buffer for glow size arrays (avoid per-frame allocation)
-  const somaGlowSz = new Float32Array(nodes.length);
+  let somaGlowSz = new Float32Array(nodes.length);
   const tmpSzB = gl.createBuffer()!;
 
   // ── Impulse state ──
@@ -503,10 +507,36 @@ export const mount: RoomMount = (canvas, opts) => {
   const initCount = Math.min(120, MAX_IMP);
   for (let i = 0; i < initCount; i++) spawnImpulse();
 
+  // ── Regeneration (double tap/click → new map, brief crossfade) ──
+  const FADE_RATE = 4; // full fade in 250ms
+  let fade = 1;
+  let regenPending = false;
+
+  function regenerate(): void {
+    geo = buildGeometry(neuronCount);
+    ({ edges, nodes, somaPosF, somaSzF, edgeMainSegStart, edgeMainSegCount } = geo);
+    posF32 = new Float32Array(geo.posArr);
+    NSEG = geo.segEdge.length;
+    brightArr    = new Float32Array(NSEG * 2);
+    brightSmooth = new Float32Array(NSEG * 2);
+    somaAlDyn    = new Float32Array(nodes.length);
+    somaGlowSz   = new Float32Array(nodes.length);
+    impulses.length = 0;
+    bursts.length = 0;
+    uploadStaticGeometry();
+    for (let i = 0; i < initCount; i++) spawnImpulse();
+  }
+
   // ── Sim state (mouse / rotation) ──
   let angle = 0;
   let mx = 0, my = 0;
   let simSpeed = 0.08;
+
+  // Desktop (hover-capable, fine pointer): orbit follows the cursor, smoothed each frame
+  const hoverOrbit = opts.quality === 'full'
+    && typeof matchMedia === 'function'
+    && matchMedia('(hover: hover) and (pointer: fine)').matches;
+  let hoverMx = 0, hoverMy = 0;
 
   // ── Audio-reactive state (rms written by createAudio tick) ──
   // Envelope follower over normalized mic level: fast attack, slow release.
@@ -524,6 +554,10 @@ export const mount: RoomMount = (canvas, opts) => {
     // Track active pointers for two-finger pinch
     const activePointers = new Map<number, { x: number; y: number }>();
 
+    // Double tap/click → regenerate the map
+    let lastTapT = 0, lastTapX = 0, lastTapY = 0;
+    const TAP_MS = 300, TAP_DIST = 30;
+
     function onDragStart(cx: number, cy: number): void {
       isDragging = true;
       dragStartX = cx;
@@ -535,10 +569,14 @@ export const mount: RoomMount = (canvas, opts) => {
 
     function onDragMove(cx: number, cy: number): void {
       if (!isDragging) return;
-      const dx = (cx - dragStartX) / canvas.clientWidth;
       const dy = (dragStartY - cy) / canvas.clientHeight;
-      mx = Math.max(-1, Math.min(1, dragStartMx + dx * 2.2));
-      my = Math.max(-1, Math.min(1, dragStartMy - (cy - dragStartY) / canvas.clientHeight * 2.2));
+      if (!hoverOrbit) {
+        // Touch: drag orbits and adjusts speed
+        const dx = (cx - dragStartX) / canvas.clientWidth;
+        mx = Math.max(-1, Math.min(1, dragStartMx + dx * 2.2));
+        my = Math.max(-1, Math.min(1, dragStartMy - (cy - dragStartY) / canvas.clientHeight * 2.2));
+      }
+      // Desktop: orbit follows the cursor, drag only adjusts speed
       simSpeed = Math.max(0.02, Math.min(0.5, simSpeedBase + dy * 0.48));
     }
 
@@ -547,14 +585,33 @@ export const mount: RoomMount = (canvas, opts) => {
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       // Only start single-pointer drag when there's exactly one pointer
       if (activePointers.size === 1) {
+        const now = performance.now();
+        if (now - lastTapT < TAP_MS && Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < TAP_DIST) {
+          lastTapT = 0;
+          regenPending = true;
+        } else {
+          lastTapT = now;
+          lastTapX = e.clientX;
+          lastTapY = e.clientY;
+        }
         onDragStart(e.clientX, e.clientY);
       } else {
-        // Second finger arrived — cancel single-finger drag
+        // Second finger arrived — cancel single-finger drag and pending tap
         isDragging = false;
+        lastTapT = 0;
       }
     }
 
     function onPointerMove(e: PointerEvent): void {
+      // Desktop hover: no pointer down → cursor position drives the orbit
+      if (hoverOrbit && activePointers.size === 0) {
+        const r = canvas.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          hoverMx = Math.max(-1, Math.min(1, ((e.clientX - r.left) / r.width) * 2 - 1));
+          hoverMy = Math.max(-1, Math.min(1, -(((e.clientY - r.top) / r.height) * 2 - 1)));
+        }
+        return;
+      }
       if (!activePointers.has(e.pointerId)) return;
 
       if (activePointers.size === 2) {
@@ -621,6 +678,24 @@ export const mount: RoomMount = (canvas, opts) => {
   const loop = createRafLoop((_dtMs, tMs) => {
     const rawDt = Math.min(_dtMs / 1000, 0.05);
     const time = tMs / 1000;
+
+    // Crossfade state machine: fade out → rebuild map → fade in
+    if (regenPending) {
+      fade = Math.max(0, fade - rawDt * FADE_RATE);
+      if (fade === 0) {
+        regenerate();
+        regenPending = false;
+      }
+    } else if (fade < 1) {
+      fade = Math.min(1, fade + rawDt * FADE_RATE);
+    }
+
+    // Desktop: ease the camera toward the cursor position
+    if (hoverOrbit) {
+      const ease = Math.min(1, rawDt * 4);
+      mx += (hoverMx - mx) * ease;
+      my += (hoverMy - my) * ease;
+    }
 
     // Audio reactivity: mic level drives glow + speed; level jumps fire surges.
     // Speech rms sits around 0.1–0.3, so normalize ×4 toward [0,1].
@@ -716,6 +791,7 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.uniform3f(uLoc(gl, progLine, 'uBaseColor'), 0.22, 0.05, 0.38);
     gl.uniform3f(uLoc(gl, progLine, 'uGlowColor'), 0.90, 0.35, 1.0);
     gl.uniform1f(uLoc(gl, progLine, 'uAudio'), audioLevel);
+    gl.uniform1f(uLoc(gl, progLine, 'uFade'), fade);
     setAttr(gl, progLine, 'aPos',    posB,    3);
     setAttr(gl, progLine, 'aBright', brightB, 1);
     gl.drawArrays(gl.LINES, 0, NSEG * 2);
@@ -724,6 +800,7 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
     gl.useProgram(progPt);
     gl.uniformMatrix4fv(uLoc(gl, progPt, 'uMVP'), false, mvp);
+    gl.uniform1f(uLoc(gl, progPt, 'uFade'), fade);
 
     // Outer glow
     gl.uniform3f(uLoc(gl, progPt, 'uColor'), 0.55, 0.1, 0.9);
