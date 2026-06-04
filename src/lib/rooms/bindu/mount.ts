@@ -3,9 +3,9 @@ import { createContext } from '@/lib/webgl/context';
 import { compileShader, linkProgram, getUniforms } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
 import { createRafLoop } from '@/lib/webgl/raf';
+import { perspective, lookAt, mul4 } from '@/lib/webgl/math';
 import { sharedState } from './state';
 import { VS, FS } from './shaders';
-import { persp, lookAt, mul4 } from './math';
 import { SEGS, VPL, FLOATS, makeTemplate, resetLine, type Line } from './lines';
 import { makeOverlay } from './overlay';
 
@@ -232,7 +232,7 @@ export const mount: RoomMount = (canvas, opts) => {
     const ex = cam.dist * cp * Math.sin(cam.yaw);
     const ey = cam.dist * sp;
     const ez = cam.dist * cp * Math.cos(cam.yaw);
-    const mvp = mul4(persp(Math.PI / 3.5, W / H, 0.05, 120), lookAt(ex, ey, ez));
+    const mvp = mul4(perspective(Math.PI / 3.5, W / H, 0.05, 120), lookAt(ex, ey, ez));
     gl.uniformMatrix4fv(u.uMVP, false, mvp);
 
     // Lines

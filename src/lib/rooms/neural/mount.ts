@@ -1,10 +1,12 @@
 import type { RoomMount } from '@/lib/webgl/types';
 import { createContext } from '@/lib/webgl/context';
+import { compileShader, linkProgram } from '@/lib/webgl/shaders';
 import { observeResize } from '@/lib/webgl/resize';
 import { createRafLoop } from '@/lib/webgl/raf';
+import { mul4, perspective, rotY, rotX, transl } from '@/lib/webgl/math';
 import { sharedState } from './state';
 import { VS_LINE, FS_LINE, VS_PT, FS_PT } from './shaders';
-import { type Vec3, rnd, lerp, mul4, perspective, rotY, rotX, transl } from './math';
+import { type Vec3, rnd, lerp } from './math';
 import { buildGeometry } from './geometry';
 
 // ─── Quality parameters ───────────────────────────────────────────────────────
@@ -14,21 +16,12 @@ const SPIKE_RATE   = { preview: 0.2, full: 0.6 } as const;
 
 // ─── GL helpers ───────────────────────────────────────────────────────────────
 
-function mkShader(gl: WebGLRenderingContext, src: string, type: number): WebGLShader {
-  const s = gl.createShader(type);
-  if (!s) throw new Error('createShader returned null');
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  return s;
-}
-
 function mkProg(gl: WebGLRenderingContext, vs: string, fs: string): WebGLProgram {
-  const p = gl.createProgram();
-  if (!p) throw new Error('createProgram returned null');
-  gl.attachShader(p, mkShader(gl, vs, gl.VERTEX_SHADER));
-  gl.attachShader(p, mkShader(gl, fs, gl.FRAGMENT_SHADER));
-  gl.linkProgram(p);
-  return p;
+  return linkProgram(
+    gl,
+    compileShader(gl, gl.VERTEX_SHADER, vs),
+    compileShader(gl, gl.FRAGMENT_SHADER, fs)
+  );
 }
 
 function setAttr(

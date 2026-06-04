@@ -35,7 +35,7 @@ npm run test:e2e    # playwright e2e smoke tests (auto-builds and serves)
 - `/about` — manifesto + tech list + contact
 - `/rooms/[slug]` — full-bleed room page, generated from the `rooms` content collection
 
-**Content (`src/content/rooms/*.yml`)** — typed via Zod schema in `src/content/config.ts`. Adding a new room = drop a YAML entry + add a `src/lib/rooms/<slug>.ts` module + register it in `src/lib/rooms/registry.ts`.
+**Content (`src/content/rooms/*.yml`)** — typed via Zod schema in `src/content/config.ts`. Adding a new room = drop a YAML entry + add a `src/lib/rooms/<slug>/` directory (an `index.ts` re-exporting `mount` + `createAudio` from sibling modules: `state`, `shaders`, `audio`, `mount`, plus room-specific geometry/overlay files) + register it in `src/lib/rooms/registry.ts`.
 
 **Shared WebGL engine (`src/lib/webgl/`)** — `context`, `shaders`, `resize`, `raf` are the four primitives. Every room imports these instead of writing boilerplate. Each room exports `mount(canvas, opts): teardown` matching `RoomMount`/`RoomTeardown` in `src/lib/webgl/types.ts`.
 
