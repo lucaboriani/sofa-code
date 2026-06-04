@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attività Neuronale</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; }
+canvas { display:block; }
+#hud {
+  position:fixed; top:22px; left:28px;
+  color:rgba(180,100,255,0.5);
+  font:11px/1.8 'Courier New',monospace;
+  letter-spacing:.2em; text-transform:uppercase;
+  pointer-events:none;
+}
+#hud span { color:rgba(210,140,255,0.9); }
+#startOverlay {
+  position:fixed; inset:0;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.72);
+  cursor:pointer; z-index:100;
+}
+#startOverlay div {
+  color:rgba(200,140,255,0.9);
+  font:13px/2 'Courier New',monospace;
+  letter-spacing:.25em; text-transform:uppercase;
+  border:1px solid rgba(180,80,255,0.4);
+  padding:14px 32px;
+  transition: background .2s;
+}
+#startOverlay:hover div { background:rgba(140,60,255,0.15); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">Neural Activity &nbsp;·&nbsp; WebGL 3D<br>Sinapsi attive: <span id="sc">0</span></div>
+<div id="startOverlay"><div>▶ &nbsp; Click to enable audio</div></div>
+
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl', {antialias:true, alpha:false});
+const sc  = document.getElementById('sc');
+
+function resize(){
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ═══════════════════════════════════════════════════════════
+// SHADERS
+// ═══════════════════════════════════════════════════════════
+
+// Lines shader — each segment has a "lit" uniform-driven brightness
+// We pass per-vertex brightness as an attribute updated each frame
+const VS_LINE = `
+  attribute vec3 aPos;
+  attribute float aBright;
+  uniform mat4 uMVP;
+  varying float vBright;
+  void main(){
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    vBright = aBright;
+  }
+`;
+const FS_LINE = `
+  precision mediump float;
+  uniform vec3 uBaseColor;
+  uniform vec3 uGlowColor;
+  varying float vBright;
+  void main(){
+    vec3 col = mix(uBaseColor, uGlowColor, vBright);
+    float a   = mix(0.55, 1.0, vBright);
+    gl_FragColor = vec4(col * a, a);
+  }
+`;
+
+// Points shader — soft glowing disk
+const VS_PT = `
+  attribute vec3 aPos;
+  attribute float aSize;
+  attribute float aAlpha;
+  uniform mat4 uMVP;
+  varying float vAlpha;
+  void main(){
+    gl_Position   = uMVP * vec4(aPos, 1.0);
+    gl_PointSize  = aSize;
+    vAlpha = aAlpha;
+  }
+`;
+const FS_PT = `
+  precision mediump float;
+  uniform vec3 uColor;
+  varying float vAlpha;
+  void main(){
+    float d = length(gl_PointCoord - 0.5) * 2.0;
+    float a = (1.0 - smoothstep(0.3, 1.0, d)) * vAlpha;
+    gl_FragColor = vec4(uColor, a);
+  }
+`;
+
+function mkShader(src, type){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  return s;
+}
+function mkProg(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, mkShader(vs, gl.VERTEX_SHADER));
+  gl.attachShader(p, mkShader(fs, gl.FRAGMENT_SHADER));
+  gl.linkProgram(p);
+  return p;
+}
+const progLine = mkProg(VS_LINE, FS_LINE);
+const progPt   = mkProg(VS_PT,   FS_PT);
+
+// ═══════════════════════════════════════════════════════════
+// MATH
+// ═══════════════════════════════════════════════════════════
+const v3   = (x,y,z)=>({x,y,z});
+const add  = (a,b)=>v3(a.x+b.x, a.y+b.y, a.z+b.z);
+const sub  = (a,b)=>v3(a.x-b.x, a.y-b.y, a.z-b.z);
+const scl  = (a,s)=>v3(a.x*s, a.y*s, a.z*s);
+const vlen = a=>Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+const norm = a=>{ const l=vlen(a)||1; return scl(a,1/l); };
+const rnd  = (lo,hi)=>lo+Math.random()*(hi-lo);
+const rndDir = ()=>{
+  const th=rnd(0,Math.PI*2), ph=Math.acos(rnd(-1,1));
+  return v3(Math.sin(ph)*Math.cos(th), Math.sin(ph)*Math.sin(th), Math.cos(ph));
+};
+const lerp = (a,b,t)=>a+(b-a)*t;
+
+// ═══════════════════════════════════════════════════════════
+// MAT4
+// ═══════════════════════════════════════════════════════════
+function mul4(a,b){
+  const o=new Float32Array(16);
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+    let s=0; for(let k=0;k<4;k++) s+=a[r+k*4]*b[k+c*4]; o[r+c*4]=s;
+  }
+  return o;
+}
+function perspective(fov,asp,n,f){
+  const t=1/Math.tan(fov/2), m=new Float32Array(16);
+  m[0]=t/asp; m[5]=t; m[10]=(f+n)/(n-f); m[14]=(2*f*n)/(n-f); m[11]=-1;
+  return m;
+}
+function rotY(a){ const m=new Float32Array(16), c=Math.cos(a), s=Math.sin(a);
+  m[0]=c; m[8]=s; m[5]=1; m[2]=-s; m[10]=c; m[15]=1; return m; }
+function rotX(a){ const m=new Float32Array(16), c=Math.cos(a), s=Math.sin(a);
+  m[0]=1; m[5]=c; m[9]=-s; m[6]=s; m[10]=c; m[15]=1; return m; }
+function transl(x,y,z){ const m=new Float32Array(16);
+  m[0]=m[5]=m[10]=m[15]=1; m[12]=x; m[13]=y; m[14]=z; return m; }
+
+// ═══════════════════════════════════════════════════════════
+// NEURON GEOMETRY
+// ═══════════════════════════════════════════════════════════
+const N = 18;
+const nodes = [];
+
+// Place somas in a slightly squashed sphere
+for(let i=0;i<N;i++){
+  const th=rnd(0,Math.PI*2), ph=Math.acos(rnd(-0.9,0.9)), r=rnd(0.5,1.1);
+  nodes.push({ pos: v3(r*Math.sin(ph)*Math.cos(th)*1.8,
+                       r*Math.sin(ph)*Math.sin(th)*1.2,
+                       r*Math.cos(ph)*1.5) });
+}
+
+// Each edge stores an array of "segments": [{p0,p1, vtxOffset}]
+// We also keep ALL points for impulse interpolation
+const edges = [];   // {segments:[], allPts:[]}
+
+function buildPath(start, end, depth){
+  // Recursive midpoint displacement
+  const pts = [start, end];
+  function subdivide(arr, d){
+    if(d===0) return arr;
+    const out=[arr[0]];
+    for(let i=0;i<arr.length-1;i++){
+      const mid = add(scl(add(arr[i],arr[i+1]),0.5), scl(rndDir(), 0.07*d));
+      out.push(mid, arr[i+1]);
+    }
+    return subdivide(out, d-1);
+  }
+  return subdivide(pts, depth);
+}
+
+function buildEdge(a, b){
+  const pts = buildPath(nodes[a].pos, nodes[b].pos, 3);
+  // Sprout lateral dendrites
+  const laterals = [];
+  for(let i=1;i<pts.length-1;i++){
+    if(Math.random()<0.22){
+      const dir = norm(add(rndDir(), scl(norm(sub(pts[i+1],pts[i-1])), -0.5)));
+      const endPt = add(pts[i], scl(dir, rnd(0.1,0.28)));
+      const lpts = buildPath(pts[i], endPt, 2);
+      laterals.push(lpts);
+    }
+  }
+  return {a, b, mainPts:pts, laterals};
+}
+
+// Connect nearby neurons
+for(let i=0;i<N;i++){
+  for(let j=i+1;j<N;j++){
+    const d = vlen(sub(nodes[j].pos, nodes[i].pos));
+    if(d<1.7 && Math.random()<0.6){
+      edges.push(buildEdge(i,j));
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// BUILD FLAT ARRAYS
+// ═══════════════════════════════════════════════════════════
+// One big position array + one brightness array (updated per frame)
+// We also store a segment map: segMap[s] = edge index, so impulse can light it
+
+const posArr = [];    // flat x,y,z pairs (two per segment)
+const segEdge = [];   // which edge does segment s belong to (index into edges)
+const segPtIdx = [];  // which point index in that path does this segment start at
+const segIsLat = [];  // is this a lateral branch?
+
+// For each edge, also store vertex offset for fast update
+// edgeSegStart[e] = index into segArr where edge e's main segments start
+const edgeMainSegStart = [];
+const edgeMainSegCount = [];
+
+function addPath(pts, edgeIdx, isLateral){
+  for(let i=0;i<pts.length-1;i++){
+    const p0=pts[i], p1=pts[i+1];
+    posArr.push(p0.x,p0.y,p0.z, p1.x,p1.y,p1.z);
+    segEdge.push(edgeIdx);
+    segPtIdx.push(i / (pts.length-1));  // normalized position along path
+    segIsLat.push(isLateral);
+  }
+  return pts.length-1; // segment count
+}
+
+for(let ei=0;ei<edges.length;ei++){
+  const e = edges[ei];
+  const start = segEdge.length;
+  const cnt   = addPath(e.mainPts, ei, false);
+  edgeMainSegStart.push(start);
+  edgeMainSegCount.push(cnt);
+  for(const lp of e.laterals) addPath(lp, ei, true);
+}
+
+const NSEG = segEdge.length;
+const brightArr    = new Float32Array(NSEG*2); // target brightness this frame
+const brightSmooth = new Float32Array(NSEG*2); // exponentially smoothed output
+
+// ═══════════════════════════════════════════════════════════
+// GL BUFFERS
+// ═══════════════════════════════════════════════════════════
+const posF32 = new Float32Array(posArr);
+
+const posB    = gl.createBuffer();
+const brightB = gl.createBuffer();
+
+gl.bindBuffer(gl.ARRAY_BUFFER, posB);
+gl.bufferData(gl.ARRAY_BUFFER, posF32, gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, brightB);
+gl.bufferData(gl.ARRAY_BUFFER, brightArr, gl.DYNAMIC_DRAW);
+
+// Soma buffers
+const somaPosF = new Float32Array(nodes.flatMap(n=>[n.pos.x,n.pos.y,n.pos.z]));
+const somaSzF  = new Float32Array(nodes.map(()=>rnd(2,4)));
+const somaAlF  = new Float32Array(nodes.length);
+
+const somaPosB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,somaPosB); gl.bufferData(gl.ARRAY_BUFFER,somaPosF,gl.STATIC_DRAW);
+const somaSzB  = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,somaSzB);  gl.bufferData(gl.ARRAY_BUFFER,somaSzF, gl.STATIC_DRAW);
+const somaAlB  = gl.createBuffer();
+
+// Impulse dot buffers
+const MAX_IMP = 200;
+const impPosF  = new Float32Array(MAX_IMP*3);
+const impSzF   = new Float32Array(MAX_IMP);
+const impAlF   = new Float32Array(MAX_IMP);
+const impPosB  = gl.createBuffer();
+const impSzB   = gl.createBuffer();
+const impAlB   = gl.createBuffer();
+
+// ═══════════════════════════════════════════════════════════
+// IMPULSE SYSTEM
+// ═══════════════════════════════════════════════════════════
+const impulses = [];
+
+function spawnImpulse(){
+  if(impulses.length >= MAX_IMP || edges.length===0) return;
+  const ei  = Math.floor(Math.random()*edges.length);
+  const e   = edges[ei];
+  const rev = Math.random()<0.5;
+  // occasionally travel a lateral
+  const useLateral = e.laterals.length>0 && Math.random()<0.25;
+  const pts  = useLateral
+    ? e.laterals[Math.floor(Math.random()*e.laterals.length)]
+    : e.mainPts;
+  const segStart = useLateral ? null : edgeMainSegStart[ei];
+  const segCount = useLateral ? null : edgeMainSegCount[ei];
+
+  impulses.push({
+    ei, pts: rev?[...pts].reverse():pts,
+    segStart, segCount, isLateral:useLateral,
+    t: 0,
+    speed: rnd(0.003, 0.009),
+    tail:  rnd(0.08, 0.22),   // how wide the glow spreads back
+    bright: rnd(0.7, 1.0),
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUDIO — ambient drone, modulated by gestures + collisions
+// ═══════════════════════════════════════════════════════════
+let audioCtx   = null;
+let audioReady = false;
+
+// Drone nodes (created after unlock)
+let droneGain, droneFilter, droneOsc1, droneOsc2, droneOsc3, droneLFO;
+let collisionGain, noiseGain;
+
+// Exposed control values
+let audioSpeedMod   = 1.0;
+let audioCollisions = 0;
+
+// Looping noise source via ScriptProcessor-free method: large buffer played in loop
+function makeNoiseSource(ctx){
+  const sr    = ctx.sampleRate;
+  const secs  = 4;
+  const buf   = ctx.createBuffer(1, sr*secs, sr);
+  const data  = buf.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
+  const src   = ctx.createBufferSource();
+  src.buffer  = buf;
+  src.loop    = true;
+  src.start();
+  return src;
+}
+
+function buildDrone(ctx){
+  const t = ctx.currentTime;
+
+  // Master gain — very low
+  droneGain = ctx.createGain();
+  droneGain.gain.setValueAtTime(0.07, t);
+  droneGain.connect(ctx.destination);
+
+  // Low-pass filter — stays deep in bass, very narrow sweep
+  droneFilter = ctx.createBiquadFilter();
+  droneFilter.type = 'lowpass';
+  droneFilter.frequency.setValueAtTime(30, t);
+  droneFilter.Q.value = 6.0;
+  droneFilter.connect(droneGain);
+
+  // Collision accent gain (impulse layer)
+  collisionGain = ctx.createGain();
+  collisionGain.gain.setValueAtTime(0, t);
+  collisionGain.connect(droneGain);
+
+  // OSC 1 — root drone (deep sub)
+  droneOsc1 = ctx.createOscillator();
+  droneOsc1.type = 'sine';
+  droneOsc1.frequency.setValueAtTime(8, t);
+  droneOsc1.connect(droneFilter);
+  droneOsc1.start();
+
+  // OSC 3 — sub octave (deep rumble)
+  droneOsc3 = ctx.createOscillator();
+  droneOsc3.type = 'sawtooth';
+  droneOsc3.frequency.setValueAtTime(4, t);
+  const g3 = ctx.createGain(); g3.gain.value = 0.22;
+  droneOsc3.connect(g3); g3.connect(droneFilter);
+  droneOsc3.start();
+
+  // Collision accent osc — low sine
+  const collOsc = ctx.createOscillator();
+  collOsc.type = 'sine';
+  collOsc.frequency.setValueAtTime(18, t);
+  collOsc.connect(collisionGain);
+  collOsc.start();
+
+  // LFO — ultra slow wobble
+  droneLFO = ctx.createOscillator();
+  droneLFO.type = 'sine';
+  droneLFO.frequency.setValueAtTime(0.03, t);
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 6;
+  droneLFO.connect(lfoGain);
+  lfoGain.connect(droneFilter.frequency);
+  droneLFO.start();
+
+  // Noise layer — band-pass filtered, silent until speed > 0.3
+  const sr  = ctx.sampleRate;
+  const nbuf = ctx.createBuffer(1, sr*3, sr);
+  const nd   = nbuf.getChannelData(0);
+  for(let i=0;i<nd.length;i++) nd[i] = Math.random()*2-1;
+  const nsrc = ctx.createBufferSource();
+  nsrc.buffer = nbuf; nsrc.loop = true; nsrc.start();
+  const nbp = ctx.createBiquadFilter();
+  nbp.type = 'bandpass'; nbp.frequency.value = 400; nbp.Q.value = 0.6;
+  noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0, t);
+  nsrc.connect(nbp); nbp.connect(noiseGain); noiseGain.connect(droneGain);
+}
+
+function updateDroneFromSim(speed, collCount, rotX){
+  if(!audioReady || !audioCtx) return;
+  const t = audioCtx.currentTime;
+
+  // Speed → filter cutoff — stays in bass
+  const targetFreq = 18 + speed * 40;
+  droneFilter.frequency.setTargetAtTime(targetFreq, t, 2.5);
+
+  // Speed → LFO rate
+  droneLFO.frequency.setTargetAtTime(0.06 + speed * 0.12, t, 4.0);
+
+  // Collisions → filter resonance spike + accent
+  if(collCount > 0){
+    const intensity = Math.min(collCount * 0.015, 0.08);
+    collisionGain.gain.cancelScheduledValues(t);
+    collisionGain.gain.setValueAtTime(intensity, t);
+    collisionGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    droneFilter.Q.cancelScheduledValues(t);
+    droneFilter.Q.setValueAtTime(3.5 + collCount * 1.2, t);
+    droneFilter.Q.setTargetAtTime(3.5, t + 0.05, 0.15);
+  }
+
+  // Rotation → filter opens slightly
+  const absRot = Math.abs(rotX);
+  droneFilter.frequency.setTargetAtTime(targetFreq + absRot * 35, t, 2.0);
+
+  // Noise layer — only above 0.45, hard off below
+  if(speed <= 0.45){
+    noiseGain.gain.cancelScheduledValues(t);
+    noiseGain.gain.setTargetAtTime(0, t, 0.1);
+  } else {
+    const noiseTarget = (speed - 0.45) / 0.05 * 0.15;
+    noiseGain.gain.setTargetAtTime(noiseTarget, t, 3.0);
+  }
+
+  // Master gain tracks speed subtly
+  const targetGain = speed < 0.05 ? 0.005 : 0.06 + Math.min(speed,3)*0.012;
+  droneGain.gain.setTargetAtTime(targetGain, t, 0.6);
+}
+
+// Overlay unlock
+const overlay = document.getElementById('startOverlay');
+function unlockAndDismiss(){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  audioCtx.resume().then(()=>{
+    audioReady = true;
+    buildDrone(audioCtx);
+  });
+  overlay.style.display = 'none';
+}
+overlay.addEventListener('click',    e=>{ e.stopPropagation(); unlockAndDismiss(); });
+overlay.addEventListener('touchend', e=>{ e.preventDefault(); e.stopPropagation(); unlockAndDismiss(); }, {passive:false});
+
+for(let i=0;i<120;i++) spawnImpulse();
+
+// ═══════════════════════════════════════════════════════════
+// COLLISION BURSTS
+// ═══════════════════════════════════════════════════════════
+// When two impulse dots are within COLL_DIST of each other in 3D,
+// we spawn a short-lived burst flash at the midpoint.
+const COLL_DIST = 0.08;   // world-space threshold
+const bursts = [];         // {x,y,z, life, maxLife}
+
+const burstPosF  = new Float32Array(256*3);
+const burstSzF   = new Float32Array(256);
+const burstAlF   = new Float32Array(256);
+const burstPosB  = gl.createBuffer();
+const burstSzB   = gl.createBuffer();
+const burstAlB   = gl.createBuffer();
+
+// ═══════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════
+function setAttr(prog, name, buf, size){
+  const loc = gl.getAttribLocation(prog, name);
+  if(loc<0) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+}
+function uLoc(prog, name){ return gl.getUniformLocation(prog, name); }
+
+// ═══════════════════════════════════════════════════════════
+// INPUT — drag to control speed (vertical) + pan (horizontal)
+// Works on both mouse and touch
+// ═══════════════════════════════════════════════════════════
+let mx=0, my=0;
+let isDragging=false;
+let dragStartX=0, dragStartY=0;
+let dragStartMx=0, dragStartMy=0;
+let simSpeed=0.08, simSpeedBase=0.08;
+
+function onDragStart(cx, cy){
+  isDragging=true;
+  dragStartX=cx; dragStartY=cy;
+  dragStartMx=mx; dragStartMy=my;
+  simSpeedBase=simSpeed;
+}
+function onDragMove(cx, cy){
+  if(!isDragging) return;
+  const dx=(cx-dragStartX)/innerWidth;
+  const dy=(dragStartY-cy)/innerHeight;
+  mx = Math.max(-1, Math.min(1, dragStartMx + dx*2.2));
+  my = Math.max(-1, Math.min(1, dragStartMy - (cy-dragStartY)/innerHeight*2.2));
+  simSpeed = Math.max(0.02, Math.min(0.5, simSpeedBase + dy*0.48));
+}
+
+// Mouse
+canvas.addEventListener('mousedown', e=>onDragStart(e.clientX, e.clientY));
+window.addEventListener('mouseup',   ()=>{ isDragging=false; });
+window.addEventListener('mousemove', e=>onDragMove(e.clientX, e.clientY));
+
+// Touch — prevent default to stop scroll interference
+canvas.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  onDragStart(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:false});
+window.addEventListener('touchend',  ()=>{ isDragging=false; });
+window.addEventListener('touchmove', e=>{
+  if(!isDragging) return;
+  e.preventDefault();
+  onDragMove(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive:false});
+
+// Speed indicator
+const speedEl = document.createElement('div');
+speedEl.style.cssText='position:fixed;bottom:22px;right:28px;color:rgba(180,100,255,0.5);font:11px "Courier New",monospace;letter-spacing:.2em;text-transform:uppercase;pointer-events:none';
+document.body.appendChild(speedEl);
+
+// ═══════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════
+let t0=performance.now(), angle=0;
+
+function frame(ts){
+  requestAnimationFrame(frame);
+  const rawDt = Math.min((ts-t0)/1000, 0.05);
+  t0=ts; const time=ts/1000;
+  const dt = rawDt * simSpeed;
+
+  speedEl.textContent = `Speed  ${simSpeed.toFixed(2)}×  ↕ drag`;
+  angle += rawDt * 0.10 * Math.min(simSpeed, 1.5);
+
+  // ── MVP matrix ──
+  const rx  = my*0.4;
+  const ry  = angle + mx*0.6;
+  const proj = perspective(Math.PI/3.6, canvas.width/canvas.height, 0.1, 20);
+  const view = transl(0,0,-4.5);
+  const rot  = mul4(rotY(ry), rotX(rx));
+  const mvp  = mul4(proj, mul4(view, rot));
+
+  gl.clearColor(0.01,0.0,0.02,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.disable(gl.DEPTH_TEST);
+
+  // ── Update impulses, build brightness map ──
+  brightArr.fill(0);
+
+  for(let ii=impulses.length-1;ii>=0;ii--){
+    const imp = impulses[ii];
+    imp.t += imp.speed * dt * 60;
+    if(imp.t > 1.0){ impulses.splice(ii,1); spawnImpulse(); spawnImpulse(); continue; }
+    if(!imp.pts || imp.pts.length < 2) continue;
+
+    // For MAIN path impulses, light up segments proportionally
+    if(!imp.isLateral && imp.segStart !== null){
+      const nSegs  = imp.segCount;
+      const head   = imp.t * nSegs;          // fractional segment position
+      const tailLen = imp.tail * nSegs;
+
+      for(let s=0;s<nSegs;s++){
+        const dist = head - s;              // how far head has passed this seg
+        let bright = 0;
+        if(dist >= 0 && dist <= tailLen){
+          // Bright at head, fades behind
+          bright = imp.bright * Math.pow(1 - dist/tailLen, 1.5);
+        } else if(dist > tailLen && dist < tailLen+1){
+          // slight residual glow right after tail
+          bright = imp.bright * 0.05 * (1-(dist-tailLen));
+        }
+        if(bright < 0.001) continue;
+        const vi = (imp.segStart + s)*2;
+        brightArr[vi]   = Math.min(1, brightArr[vi]   + bright);
+        brightArr[vi+1] = Math.min(1, brightArr[vi+1] + bright);
+      }
+    }
+  }
+
+  // ── Temporal smoothing — lerp toward target, kills flicker ──
+  const smooth = 1.0 - Math.pow(0.12, dt);  // ~12 frame time-constant
+  for(let i=0;i<brightSmooth.length;i++){
+    brightSmooth[i] += (brightArr[i] - brightSmooth[i]) * smooth;
+  }
+
+  // ── Upload brightness ──
+  gl.bindBuffer(gl.ARRAY_BUFFER, brightB);
+  gl.bufferData(gl.ARRAY_BUFFER, brightSmooth, gl.DYNAMIC_DRAW);
+
+  // ── Draw dendrites — standard blend, no flicker ──
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(progLine);
+  gl.uniformMatrix4fv(uLoc(progLine,'uMVP'), false, mvp);
+  gl.uniform3f(uLoc(progLine,'uBaseColor'), 0.22, 0.05, 0.38);
+  gl.uniform3f(uLoc(progLine,'uGlowColor'), 0.90, 0.35, 1.0);
+  setAttr(progLine,'aPos',    posB,    3);
+  setAttr(progLine,'aBright', brightB, 1);
+  gl.drawArrays(gl.LINES, 0, NSEG*2);
+
+  // ── Draw somas — additive for soft glow ──
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+  gl.useProgram(progPt);
+  gl.uniformMatrix4fv(uLoc(progPt,'uMVP'), false, mvp);
+
+  // Outer glow (large, soft)
+  gl.uniform3f(uLoc(progPt,'uColor'), 0.55, 0.1, 0.9);
+  const somaAlDyn = new Float32Array(nodes.length);
+  for(let i=0;i<nodes.length;i++) somaAlDyn[i] = 0.22 + 0.06*Math.sin(time*0.6+i*2.1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, somaAlB);
+  gl.bufferData(gl.ARRAY_BUFFER, somaAlDyn, gl.DYNAMIC_DRAW);
+  // larger sizes for outer glow
+  const somaGlowSz = somaSzF.map(s=>s*1.4);
+  const tmpSzB = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, tmpSzB);
+  gl.bufferData(gl.ARRAY_BUFFER, somaGlowSz, gl.DYNAMIC_DRAW);
+  setAttr(progPt,'aPos',   somaPosB, 3);
+  setAttr(progPt,'aSize',  tmpSzB,   1);
+  setAttr(progPt,'aAlpha', somaAlB,  1);
+  gl.drawArrays(gl.POINTS, 0, nodes.length);
+
+  // Core bright dot
+  gl.uniform3f(uLoc(progPt,'uColor'), 0.95, 0.75, 1.0);
+  for(let i=0;i<nodes.length;i++) somaAlDyn[i] = 0.80 + 0.08*Math.sin(time*0.9+i*1.7);
+  gl.bindBuffer(gl.ARRAY_BUFFER, somaAlB);
+  gl.bufferData(gl.ARRAY_BUFFER, somaAlDyn, gl.DYNAMIC_DRAW);
+  setAttr(progPt,'aSize',  somaSzB, 1);
+  setAttr(progPt,'aAlpha', somaAlB, 1);
+  gl.drawArrays(gl.POINTS, 0, nodes.length);
+
+  // ── Draw impulse dots ──
+  let icount=0;
+  for(const imp of impulses){
+    const pts = imp.pts;
+    if(!pts || pts.length < 2) continue;
+    const T   = imp.t*(pts.length-1);
+    const si  = Math.min(Math.floor(T), pts.length-2);
+    const fr  = T-si;
+    const p0=pts[si], p1=pts[si+1];
+    if(!p0 || !p1) continue;
+    impPosF[icount*3]   = lerp(p0.x,p1.x,fr);
+    impPosF[icount*3+1] = lerp(p0.y,p1.y,fr);
+    impPosF[icount*3+2] = lerp(p0.z,p1.z,fr);
+    const edge = Math.sin(imp.t*Math.PI);
+    impSzF[icount]  = 2 * edge + 1;
+    impAlF[icount]  = 0.90 * edge + 0.05;
+    icount++;
+  }
+
+  if(icount>0){
+    // bright core — white with purple tint
+    gl.uniform3f(uLoc(progPt,'uColor'), 1.0, 0.85, 1.0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, impPosB); gl.bufferData(gl.ARRAY_BUFFER, impPosF.subarray(0,icount*3), gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, impSzB);  gl.bufferData(gl.ARRAY_BUFFER, impSzF.subarray(0,icount),    gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, impAlB);  gl.bufferData(gl.ARRAY_BUFFER, impAlF.subarray(0,icount),    gl.DYNAMIC_DRAW);
+    setAttr(progPt,'aPos',   impPosB, 3);
+    setAttr(progPt,'aSize',  impSzB,  1);
+    setAttr(progPt,'aAlpha', impAlB,  1);
+    gl.drawArrays(gl.POINTS, 0, icount);
+
+    // outer halo — deep violet
+    gl.uniform3f(uLoc(progPt,'uColor'), 0.65, 0.1, 1.0);
+    const hSz  = impSzF.slice(0,icount).map(s=>s*1.8);
+    const hAl  = impAlF.slice(0,icount).map(a=>a*0.35);
+    gl.bindBuffer(gl.ARRAY_BUFFER, impSzB); gl.bufferData(gl.ARRAY_BUFFER, hSz, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, impAlB); gl.bufferData(gl.ARRAY_BUFFER, hAl, gl.DYNAMIC_DRAW);
+    setAttr(progPt,'aSize',  impSzB, 1);
+    setAttr(progPt,'aAlpha', impAlB, 1);
+    gl.drawArrays(gl.POINTS, 0, icount);
+  }
+
+  // ── Collision detection ──
+  const COLL_DIST2 = COLL_DIST * COLL_DIST;
+  let frameCollisions = 0;
+  for(let a=0;a<icount-1;a++){
+    const ax=impPosF[a*3], ay=impPosF[a*3+1], az=impPosF[a*3+2];
+    for(let b=a+1;b<icount;b++){
+      const dx=ax-impPosF[b*3], dy=ay-impPosF[b*3+1], dz=az-impPosF[b*3+2];
+      if(dx*dx+dy*dy+dz*dz < COLL_DIST2){
+        const mx2=(ax+impPosF[b*3])*0.5, my2=(ay+impPosF[b*3+1])*0.5, mz2=(az+impPosF[b*3+2])*0.5;
+        if(bursts.length < 80) bursts.push({x:mx2,y:my2,z:mz2, life:1.0, maxLife:1.0});
+        frameCollisions++;
+      }
+    }
+  }
+
+  // ── Update & draw bursts ──
+  let bcount=0;
+  for(let i=bursts.length-1;i>=0;i--){
+    bursts[i].life -= dt * 3.5;
+    if(bursts[i].life<=0){ bursts.splice(i,1); continue; }
+    const b=bursts[i];
+    burstPosF[bcount*3]   = b.x;
+    burstPosF[bcount*3+1] = b.y;
+    burstPosF[bcount*3+2] = b.z;
+    burstSzF[bcount] = 5;             // fixed size, no expansion
+    burstAlF[bcount] = b.life * 0.95;
+    bcount++;
+  }
+
+  if(bcount>0){
+    // Bright white-yellow flash — fixed size
+    gl.uniform3f(uLoc(progPt,'uColor'), 1.0, 0.95, 0.7);
+    gl.bindBuffer(gl.ARRAY_BUFFER, burstPosB); gl.bufferData(gl.ARRAY_BUFFER, burstPosF.subarray(0,bcount*3), gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, burstSzB);  gl.bufferData(gl.ARRAY_BUFFER, burstSzF.subarray(0,bcount),    gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, burstAlB);  gl.bufferData(gl.ARRAY_BUFFER, burstAlF.subarray(0,bcount),    gl.DYNAMIC_DRAW);
+    setAttr(progPt,'aPos',   burstPosB, 3);
+    setAttr(progPt,'aSize',  burstSzB,  1);
+    setAttr(progPt,'aAlpha', burstAlB,  1);
+    gl.drawArrays(gl.POINTS, 0, bcount);
+
+    // Violet halo — fixed size, slightly larger
+    gl.uniform3f(uLoc(progPt,'uColor'), 0.8, 0.2, 1.0);
+    const rSz = burstSzF.slice(0,bcount).map(()=>9);
+    const rAl = burstAlF.slice(0,bcount).map(a=>a*0.35);
+    gl.bindBuffer(gl.ARRAY_BUFFER, burstSzB); gl.bufferData(gl.ARRAY_BUFFER, rSz, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, burstAlB); gl.bufferData(gl.ARRAY_BUFFER, rAl, gl.DYNAMIC_DRAW);
+    setAttr(progPt,'aSize',  burstSzB, 1);
+    setAttr(progPt,'aAlpha', burstAlB, 1);
+    gl.drawArrays(gl.POINTS, 0, bcount);
+  }
+
+  // ── Update drone audio (~10fps is enough for smoothing) ──
+  updateDroneFromSim(simSpeed, frameCollisions, mx);
+
+  sc.textContent = icount;
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

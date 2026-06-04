@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spider Web Swarm</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; width:100vw; height:100vh; }
+canvas { display:block; width:100vw; height:100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function(){
+'use strict';
+var canvas=document.getElementById('c');
+var gl=canvas.getContext('webgl',{antialias:true,alpha:false});
+if(!gl){document.body.innerHTML='<p style="color:#fff;padding:2em">WebGL unavailable</p>';return;}
+
+function lerp(a,b,t){return a+(b-a)*t;}
+function rand(a,b){return a+Math.random()*(b-a);}
+
+// ── shaders ───────────────────────────────────────────────────────────────
+// Geometry is in local coords (centred at 0,0, radius ~1).
+// Vertex shader applies: translate, uniform scale, rotation, alpha — no JS rebuild.
+// Per-segment: aA/aB are the two endpoints in LOCAL space.
+// aSide/aT expand the line into a quad. aBaseAlpha is the baked opacity weight.
+var strandVS=[
+  'attribute vec2 aA;',
+  'attribute vec2 aB;',
+  'attribute float aBaseAlpha;', // baked [0..1] opacity for this segment
+  'attribute float aSide;',      // -1 or +1
+  'attribute float aT;',         // 0=A end, 1=B end
+  'uniform vec2  uTrans;',       // world translation (cx,cy)
+  'uniform float uScale;',       // radius in px
+  'uniform float uCos;',         // cos(angle)
+  'uniform float uSin;',         // sin(angle)
+  'uniform float uAlpha;',       // fade envelope [0..1]
+  'uniform vec2  uRes;',
+  'uniform float uW;',           // half-width in px
+  'uniform vec3  uCol;',
+  'varying float vSide;',
+  'varying float vAl;',
+  'varying vec3  vCol;',
+  'void main(){',
+  // rotate+scale A and B from local → world
+  '  vec2 rA=vec2(aA.x*uCos-aA.y*uSin, aA.x*uSin+aA.y*uCos)*uScale+uTrans;',
+  '  vec2 rB=vec2(aB.x*uCos-aB.y*uSin, aB.x*uSin+aB.y*uCos)*uScale+uTrans;',
+  '  vec2 d=rB-rA;',
+  '  float len=length(d);',
+  '  vec2 n=(len>0.001)?vec2(-d.y,d.x)/len:vec2(0.,1.);',
+  '  vec2 pos=mix(rA,rB,aT)+n*aSide*uW;',
+  '  vec2 clip=(pos/uRes)*2.-1.;',
+  '  gl_Position=vec4(clip.x,-clip.y,0.,1.);',
+  '  vSide=aSide;',
+  '  vAl=aBaseAlpha*uAlpha;',
+  '  vCol=uCol;',
+  '}'
+].join('\n');
+
+var strandFS=[
+  'precision mediump float;',
+  'varying float vSide;',
+  'varying float vAl;',
+  'varying vec3  vCol;',
+  'void main(){',
+  '  float a=smoothstep(1.,.1,abs(vSide))*vAl;',
+  '  gl_FragColor=vec4(vCol*a,a);',
+  '}'
+].join('\n');
+
+var quadVS=[
+  'attribute vec2 aPos; varying vec2 vUv;',
+  'void main(){vUv=aPos*.5+.5;gl_Position=vec4(aPos,0.,1.);}'
+].join('\n');
+
+function blurFS(horiz){
+  var d=horiz?'vec2(float(i-3)*px.x*2.,0.)':'vec2(0.,float(i-3)*px.y*2.)';
+  return [
+    'precision mediump float;',
+    'uniform sampler2D uTex;uniform vec2 uRes;varying vec2 vUv;',
+    'float w(int i){if(i==0||i==6)return 0.0625;if(i==1||i==5)return 0.109375;if(i==2||i==4)return 0.21875;return 0.25;}',
+    'void main(){vec2 px=1./uRes;vec4 c=vec4(0.);for(int i=0;i<7;i++)c+=texture2D(uTex,vUv+'+d+')*w(i);gl_FragColor=c;}'
+  ].join('\n');
+}
+
+var compFS=[
+  'precision mediump float;',
+  'uniform sampler2D uSharp,uBlur;uniform float uBloom;varying vec2 vUv;',
+  'void main(){gl_FragColor=clamp(texture2D(uSharp,vUv)+texture2D(uBlur,vUv)*uBloom,0.,1.);}'
+].join('\n');
+
+function mkShader(type,src){
+  var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+function mkProg(vs,fs){
+  var p=gl.createProgram();
+  gl.attachShader(p,mkShader(gl.VERTEX_SHADER,vs));
+  gl.attachShader(p,mkShader(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);return p;
+}
+
+var strandProg=mkProg(strandVS,strandFS);
+var blurHP=mkProg(quadVS,blurFS(true));
+var blurVP=mkProg(quadVS,blurFS(false));
+var compP =mkProg(quadVS,compFS);
+
+// Cached uniform locations
+var uTrans=gl.getUniformLocation(strandProg,'uTrans');
+var uScale=gl.getUniformLocation(strandProg,'uScale');
+var uCosU =gl.getUniformLocation(strandProg,'uCos');
+var uSinU =gl.getUniformLocation(strandProg,'uSin');
+var uAlpha=gl.getUniformLocation(strandProg,'uAlpha');
+var uRes  =gl.getUniformLocation(strandProg,'uRes');
+var uW    =gl.getUniformLocation(strandProg,'uW');
+var uCol  =gl.getUniformLocation(strandProg,'uCol');
+
+var aALoc  =gl.getAttribLocation(strandProg,'aA');
+var aBLoc  =gl.getAttribLocation(strandProg,'aB');
+var aBALoc =gl.getAttribLocation(strandProg,'aBaseAlpha');
+var aSideLoc=gl.getAttribLocation(strandProg,'aSide');
+var aTLoc  =gl.getAttribLocation(strandProg,'aT');
+
+// Stride: aA(2)+aB(2)+aBaseAlpha(1)+aSide(1)+aT(1) = 7 floats
+var STRIDE=7;
+
+var quadBuf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+
+function makeFBO(w,h){
+  var tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  var fb=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return {tex:tex,fb:fb};
+}
+
+var W=0,H=0,fboSharp,fboPingA,fboPingB;
+function resize(){
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight;
+  fboSharp=makeFBO(W,H);fboPingA=makeFBO(W,H);fboPingB=makeFBO(W,H);
+  gl.viewport(0,0,W,H);
+}
+resize();
+window.addEventListener('resize',resize);
+
+// ── Geometry baking (local coords, radius = 1.0) ──────────────────────────
+// All baked geometry lives in unit space. The vertex shader scales/rotates/translates.
+// pushSeg: push one quad (6 verts × 7 floats) into a plain JS array
+function pushSeg(buf,ax,ay,bx,by,alA,alB){
+  buf.push(
+    ax,ay,bx,by,alA,-1,0,
+    ax,ay,bx,by,alA,+1,0,
+    ax,ay,bx,by,alB,-1,1,
+    ax,ay,bx,by,alB,-1,1,
+    ax,ay,bx,by,alA,+1,0,
+    ax,ay,bx,by,alB,+1,1
+  );
+}
+
+// Quadratic bezier subdivided — all in local unit space
+var SEG=18;
+function pushBez(buf,ax,ay,cx,cy,bx,by,alA,alB){
+  var px=ax,py=ay,pal=alA;
+  for(var i=1;i<=SEG;i++){
+    var t=i/SEG,u=1-t;
+    var qx=u*u*ax+2*u*t*cx+t*t*bx;
+    var qy=u*u*ay+2*u*t*cy+t*t*by;
+    var al=lerp(alA,alB,t);
+    pushSeg(buf,px,py,qx,qy,pal,al);
+    px=qx;py=qy;pal=al;
+  }
+}
+
+// Spoke angles: non-uniform spacing, normalised to 2π
+function makeAngles(n,jitter){
+  var base=Math.PI*2/n,acc=0,out=[];
+  for(var s=0;s<n;s++){acc+=base*rand(1-jitter,1+jitter);out.push(acc);}
+  var sc=Math.PI*2/acc;
+  for(var s=0;s<n;s++)out[s]*=sc;
+  return out;
+}
+
+// ── TYPE BAKERS (all return a Float32Array in local unit coords) ──────────
+
+// 0 — Orb weaver
+function bakeOrb(){
+  var buf=[];
+  var ns=Math.round(rand(10,17));
+  var nr=Math.round(rand(6,11));
+  var hubR=rand(0.04,0.09);
+  var angls=makeAngles(ns,0.28);
+  var spokeL=[];for(var s=0;s<ns;s++)spokeL.push(rand(0.72,1.18));
+  // ring radii (logarithmic)
+  var ringR=[];for(var i=0;i<nr;i++)ringR.push(Math.pow((i+1)/nr,0.75)*rand(0.92,1.08));
+  // sag per ring per spoke
+  var sag=[];
+  for(var i=0;i<nr;i++){var row=[];for(var s=0;s<ns;s++)row.push(rand(0.06,0.16));sag.push(row);}
+
+  // Spoke tip positions (unit radius)
+  var tx=[],ty=[];
+  for(var s=0;s<ns;s++){
+    var l=spokeL[s];
+    tx.push(Math.cos(angls[s])*l);
+    ty.push(Math.sin(angls[s])*l);
+  }
+
+  // Hub ring
+  for(var i=0;i<20;i++){
+    var a1=(i/20)*Math.PI*2, a2=((i+1)/20)*Math.PI*2;
+    pushSeg(buf,Math.cos(a1)*hubR,Math.sin(a1)*hubR,Math.cos(a2)*hubR,Math.sin(a2)*hubR,0.5,0.5);
+  }
+  // Spokes hub→tip, then tip→edge (fade)
+  for(var s=0;s<ns;s++){
+    var hx=Math.cos(angls[s])*hubR, hy=Math.sin(angls[s])*hubR;
+    pushBez(buf,hx,hy,(hx+tx[s])*0.5,( hy+ty[s])*0.5,tx[s],ty[s],0.3,1.0);
+    // extend outward past r=1 to simulate frame threads running off-screen
+    var ex=tx[s]*2.2, ey=ty[s]*2.2;
+    pushBez(buf,tx[s],ty[s],(tx[s]+ex)*0.5,(ty[s]+ey)*0.5,ex,ey,1.0,0.0);
+  }
+  // Rings
+  for(var ring=0;ring<nr;ring++){
+    var t=ringR[ring];
+    var ra=0.65+0.35*(1-t*0.35);
+    for(var s=0;s<ns;s++){
+      var sN=(s+1)%ns;
+      var ax=tx[s]*t, ay=ty[s]*t;
+      var bx=tx[sN]*t, by=ty[sN]*t;
+      var mx=(ax+bx)*0.5, my=(ay+by)*0.5;
+      var outLen=Math.sqrt(mx*mx+my*my)+0.001;
+      var clen=Math.sqrt((bx-ax)*(bx-ax)+(by-ay)*(by-ay))+0.001;
+      var sd=clen*sag[ring][s];
+      pushBez(buf,ax,ay,mx+(mx/outLen)*sd,my+(my/outLen)*sd,bx,by,ra,ra);
+    }
+  }
+  // Frame ring (outermost, slightly brighter)
+  var ot=ringR[nr-1]*1.03;
+  for(var s=0;s<ns;s++){
+    var sN=(s+1)%ns;
+    pushSeg(buf,tx[s]*ot,ty[s]*ot,tx[sN]*ot,ty[sN]*ot,0.55,0.55);
+  }
+  return new Float32Array(buf);
+}
+
+// 1 — Cobweb (tangled threads between scattered points)
+function bakeCob(){
+  var buf=[];
+  var n=Math.round(rand(14,26));
+  var ax=[],ay=[];
+  for(var i=0;i<n;i++){
+    var a=rand(0,Math.PI*2), d=rand(0.1,1.0);
+    ax.push(d*Math.cos(a)); ay.push(d*Math.sin(a));
+  }
+  var droop=[];
+  // Connect each point to 2-3 neighbours
+  for(var i=0;i<n;i++){
+    var conns=Math.round(rand(1,3));
+    for(var c=0;c<conns;c++){
+      var j=Math.floor(rand(0,n));
+      if(j===i)continue;
+      var dr=rand(0.04,0.28);
+      var mxC=(ax[i]+ax[j])*0.5, myC=(ay[i]+ay[j])*0.5;
+      var clen=Math.sqrt((ax[j]-ax[i])*(ax[j]-ax[i])+(ay[j]-ay[i])*(ay[j]-ay[i]))+0.001;
+      // sag downward in local space
+      pushBez(buf,ax[i],ay[i],mxC,myC+clen*dr,ax[j],ay[j],0.7,0.7);
+    }
+  }
+  // Escape threads
+  var esc=Math.round(rand(3,8));
+  for(var k=0;k<esc;k++){
+    var ang=rand(0,Math.PI*2);
+    var ox=Math.cos(ang)*rand(0.1,0.5), oy=Math.sin(ang)*rand(0.1,0.5);
+    var ex=Math.cos(ang)*2.2, ey=Math.sin(ang)*2.2;
+    pushBez(buf,ox,oy,(ox+ex)*0.5,(oy+ey)*0.5,ex,ey,0.6,0.0);
+  }
+  return new Float32Array(buf);
+}
+
+// 2 — Funnel web (flat sheet tapering to a point)
+function bakeFunnel(){
+  var buf=[];
+  var rows=Math.round(rand(5,9));
+  var cols=Math.round(rand(6,12));
+  var fd=rand(0.3,0.7); // funnel depth
+  var rowSag=[];for(var r=0;r<=rows;r++)rowSag.push(rand(0.04,0.12));
+
+  function pt(u,v){
+    // u: -1..1 width, v: 0..1 depth — sheet narrows toward 0,0
+    var spread=1-v*fd;
+    var x=u*spread, y=v;
+    // downward sag (gravity)
+    var sag=0.1*v*(1-v)*rowSag[Math.min(Math.floor(v*rows),rows-1)];
+    return [x, y+sag];
+  }
+
+  // Longitudinal wires
+  for(var c=0;c<=cols;c++){
+    var u=lerp(-1,1,c/cols);
+    var prev=pt(u,0);
+    for(var seg=1;seg<=10;seg++){
+      var p=pt(u,seg/10);
+      pushSeg(buf,prev[0],prev[1],p[0],p[1],0.5,0.5);
+      prev=p;
+    }
+    // Extend off-screen
+    var tip=pt(u,1);
+    pushBez(buf,tip[0],tip[1],tip[0]*1.2,tip[1]*1.5,tip[0]*2.2,tip[1]*2.2,0.4,0.0);
+  }
+  // Cross wires
+  for(var row=0;row<=rows;row++){
+    var v=row/rows;
+    var pts=[];for(var c=0;c<=cols;c++)pts.push(pt(lerp(-1,1,c/cols),v));
+    for(var c=0;c<cols;c++){
+      var ax=pts[c][0],ay=pts[c][1],bx=pts[c+1][0],by=pts[c+1][1];
+      var clen=Math.sqrt((bx-ax)*(bx-ax)+(by-ay)*(by-ay))+0.001;
+      pushBez(buf,ax,ay,(ax+bx)*0.5,(ay+by)*0.5+clen*0.06,bx,by,0.65,0.65);
+    }
+    // Side frame threads
+    var lp=pt(-1,v), rp=pt(1,v);
+    pushBez(buf,lp[0],lp[1],lp[0]-0.5,lp[1],lp[0]-2.2,lp[1],0.5,0.0);
+    pushBez(buf,rp[0],rp[1],rp[0]+0.5,rp[1],rp[0]+2.2,rp[1],0.5,0.0);
+  }
+  return new Float32Array(buf);
+}
+
+// 3 — Spiral web
+function bakeSpiral(){
+  var buf=[];
+  var turns=rand(3,6);
+  var n=Math.round(rand(90,160));
+  var ns=Math.round(rand(8,14));
+  var angls=makeAngles(ns,0.20);
+  var spokeL=[];for(var s=0;s<ns;s++)spokeL.push(rand(0.82,1.12));
+  // Random radial noise per spiral point (baked, not animated)
+  var noise=[];for(var i=0;i<n;i++)noise.push(rand(-0.04,0.04));
+
+  // Spiral
+  for(var i=0;i<n-1;i++){
+    var fA=i/(n-1), fB=(i+1)/(n-1);
+    var aA=fA*turns*Math.PI*2, aB=fB*turns*Math.PI*2;
+    var rA=fA*(1+noise[i]), rB=fB*(1+noise[i+1]);
+    pushSeg(buf,Math.cos(aA)*rA,Math.sin(aA)*rA,Math.cos(aB)*rB,Math.sin(aB)*rB,
+      lerp(0.25,1.0,fA),lerp(0.25,1.0,fB));
+  }
+  // Spokes
+  for(var s=0;s<ns;s++){
+    var l=spokeL[s];
+    var tx=Math.cos(angls[s])*l, ty=Math.sin(angls[s])*l;
+    pushSeg(buf,0,0,tx,ty,0.2,0.5);
+    pushBez(buf,tx,ty,tx*1.5,ty*1.5,tx*2.2,ty*2.2,0.5,0.0);
+  }
+  return new Float32Array(buf);
+}
+
+// 4 — Mesh / sheet web (Linyphiidae irregular net)
+function bakeMesh(){
+  var buf=[];
+  var n=Math.round(rand(16,30));
+  var nx=[],ny=[];
+  var scX=rand(0.6,1.2), scY=rand(0.35,0.75);
+  for(var i=0;i<n;i++){
+    var a=rand(0,Math.PI*2), r=Math.sqrt(rand(0,1));
+    nx.push(r*Math.cos(a)*scX); ny.push(r*Math.sin(a)*scY);
+  }
+  // Connect nearest neighbours
+  var seen={};
+  for(var i=0;i<n;i++){
+    var dists=[];
+    for(var j=0;j<n;j++){if(j===i)continue;var dx=nx[i]-nx[j],dy=ny[i]-ny[j];dists.push({j:j,d:dx*dx+dy*dy});}
+    dists.sort(function(a,b){return a.d-b.d;});
+    var conns=Math.round(rand(2,4));
+    for(var k=0;k<Math.min(conns,dists.length);k++){
+      var j=dists[k].j;
+      var key=Math.min(i,j)+','+Math.max(i,j);
+      if(seen[key])continue; seen[key]=true;
+      var ax=nx[i],ay=ny[i],bx=nx[j],by=ny[j];
+      var clen=Math.sqrt((bx-ax)*(bx-ax)+(by-ay)*(by-ay))+0.001;
+      var sag=rand(0.04,0.18)*clen;
+      pushBez(buf,ax,ay,(ax+bx)*0.5,(ay+by)*0.5+sag,bx,by,0.75,0.75);
+    }
+  }
+  // Anchor threads
+  var anch=Math.round(rand(4,9));
+  for(var k=0;k<anch;k++){
+    var ang=rand(0,Math.PI*2);
+    var ni=Math.floor(rand(0,n));
+    var ox=nx[ni],oy=ny[ni];
+    var ex=ox+Math.cos(ang)*2.2, ey=oy+Math.sin(ang)*2.2;
+    pushBez(buf,ox,oy,(ox+ex)*0.5,(oy+ey)*0.5,ex,ey,0.55,0.0);
+  }
+  return new Float32Array(buf);
+}
+
+var BAKERS=[bakeOrb,bakeCob,bakeFunnel,bakeSpiral,bakeMesh];
+
+// ── Web instance ──────────────────────────────────────────────────────────
+var NUM_WEBS=100;
+
+function Web(){this.glBuf=gl.createBuffer(); this.reset(true);}
+
+Web.prototype.reset=function(init){
+  this.cx=rand(W*0.08,W*0.92);
+  this.cy=rand(H*0.08,H*0.92);
+  this.r =rand(55,185);
+  this.angle=rand(0,Math.PI*2);
+  this.spin =rand(-0.001,0.001);
+  this.alpha=init?rand(0.04,0.48):0.0;
+  this.targetAlpha=rand(0.12,0.48);
+  this.life=0;
+  this.maxLife=rand(900,2200);
+  this.vx=rand(-0.06,0.06);
+  this.vy=rand(-0.05,0.05);
+  this.hue=rand(0,1);
+  this.dying=false;
+
+  // Bake static geometry once — never rebuilt until next reset
+  var baker=BAKERS[Math.floor(Math.random()*BAKERS.length)];
+  this.geom=baker();
+  this.vertCount=this.geom.length/STRIDE;
+
+  gl.bindBuffer(gl.ARRAY_BUFFER,this.glBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,this.geom,gl.STATIC_DRAW);
+};
+
+Web.prototype.update=function(){
+  this.life++;
+  this.angle+=this.spin;
+  this.cx+=this.vx; this.cy+=this.vy;
+  this.vx*=0.97; this.vy*=0.97;
+
+  var offscreen=(this.cx<-this.r*2||this.cx>W+this.r*2||
+                 this.cy<-this.r*2||this.cy>H+this.r*2);
+  if(offscreen||this.life>this.maxLife*0.78) this.dying=true;
+
+  var t=this.life/this.maxLife;
+  if(!this.dying&&t<0.12)       this.alpha=lerp(0.0,this.targetAlpha,t/0.12);
+  else if(this.dying)            this.alpha=Math.max(0,this.alpha-0.003);
+
+  // Only reset when fully invisible
+  if(this.dying&&this.alpha<=0.001) this.reset(false);
+};
+
+Web.prototype.draw=function(){
+  if(this.alpha<0.001)return;
+  var col=webColor(this.hue);
+  gl.uniform3f(uCol,col[0],col[1],col[2]);
+  gl.uniform2f(uTrans,this.cx,this.cy);
+  gl.uniform1f(uScale,this.r);
+  gl.uniform1f(uCosU, Math.cos(this.angle));
+  gl.uniform1f(uSinU, Math.sin(this.angle));
+  gl.uniform1f(uAlpha,this.alpha);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER,this.glBuf);
+  var S=STRIDE*4;
+  gl.enableVertexAttribArray(aALoc);  gl.vertexAttribPointer(aALoc,  2,gl.FLOAT,false,S,0);
+  gl.enableVertexAttribArray(aBLoc);  gl.vertexAttribPointer(aBLoc,  2,gl.FLOAT,false,S,8);
+  gl.enableVertexAttribArray(aBALoc); gl.vertexAttribPointer(aBALoc, 1,gl.FLOAT,false,S,16);
+  gl.enableVertexAttribArray(aSideLoc);gl.vertexAttribPointer(aSideLoc,1,gl.FLOAT,false,S,20);
+  gl.enableVertexAttribArray(aTLoc);  gl.vertexAttribPointer(aTLoc,  1,gl.FLOAT,false,S,24);
+  gl.drawArrays(gl.TRIANGLES,0,this.vertCount);
+};
+
+function webColor(hue){
+  return [lerp(.58,.80,Math.sin(hue*Math.PI)),
+          lerp(.65,.88,Math.cos(hue*Math.PI*.7)),
+          lerp(.80,1.0,1-hue*.3)];
+}
+
+var webs=[];
+for(var i=0;i<NUM_WEBS;i++) webs.push(new Web());
+
+// ── pointer ───────────────────────────────────────────────────────────────
+var ptr={x:-9999,y:-9999,px:-9999,py:-9999,down:false,dx:0,dy:0};
+// Pinch state
+var pinch={active:false,dist:0,cx:0,cy:0,scale:1};
+
+function pDown(x,y){ptr.down=true;ptr.x=ptr.px=x;ptr.y=ptr.py=y;ptr.dx=ptr.dy=0;}
+function pMove(x,y){ptr.px=ptr.x;ptr.py=ptr.y;ptr.x=x;ptr.y=y;if(ptr.down){ptr.dx=x-ptr.px;ptr.dy=y-ptr.py;}}
+function pUp(){ptr.down=false;ptr.dx=ptr.dy=0;}
+
+function touchDist(t){
+  var dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+function touchMid(t){
+  return {x:(t[0].clientX+t[1].clientX)*0.5, y:(t[0].clientY+t[1].clientY)*0.5};
+}
+
+// ── Gyroscope (mobile tilt) ───────────────────────────────────────────────
+var gyro = {x:0, y:0, active:false};
+
+function onDeviceOrientation(e){
+  // gamma = left/right tilt (-90..90), beta = front/back tilt (-180..180)
+  if(e.gamma===null||e.beta===null) return;
+  gyro.active = true;
+  // Smooth the raw sensor values
+  gyro.x = gyro.x*0.85 + (e.gamma/90)*0.15;  // -1..1
+  gyro.y = gyro.y*0.85 + (e.beta /90)*0.15;   // -1..1
+}
+
+// iOS 13+ requires permission
+function requestGyro(){
+  if(typeof DeviceOrientationEvent !== 'undefined' &&
+     typeof DeviceOrientationEvent.requestPermission === 'function'){
+    DeviceOrientationEvent.requestPermission().then(function(state){
+      if(state==='granted') window.addEventListener('deviceorientation', onDeviceOrientation);
+    }).catch(function(){});
+  } else {
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+  }
+}
+// Try immediately (Android), request on first touch (iOS)
+requestGyro();
+canvas.addEventListener('touchstart', function(){ requestGyro(); }, {once:true, passive:true});
+
+canvas.addEventListener('mousedown', function(e){pDown(e.clientX,e.clientY);});
+canvas.addEventListener('mousemove', function(e){pMove(e.clientX,e.clientY);});
+canvas.addEventListener('mouseup',   pUp);
+canvas.addEventListener('mouseleave',pUp);
+
+canvas.addEventListener('touchstart',function(e){
+  e.preventDefault();
+  if(e.touches.length===1){
+    pinch.active=false;
+    pDown(e.touches[0].clientX,e.touches[0].clientY);
+  } else if(e.touches.length===2){
+    // Start pinch — stop drag
+    ptr.down=false; ptr.dx=ptr.dy=0;
+    pinch.active=true;
+    pinch.dist=touchDist(e.touches);
+    var m=touchMid(e.touches);
+    pinch.cx=m.x; pinch.cy=m.y;
+    pinch.scale=1;
+  }
+},{passive:false});
+
+canvas.addEventListener('touchmove',function(e){
+  e.preventDefault();
+  if(e.touches.length===1&&!pinch.active){
+    pMove(e.touches[0].clientX,e.touches[0].clientY);
+  } else if(e.touches.length===2){
+    var newDist=touchDist(e.touches);
+    var ratio=newDist/(pinch.dist||1);
+    var delta=ratio-pinch.scale; // +ve = expand, -ve = contract
+    pinch.scale=ratio;
+    var m=touchMid(e.touches);
+    pinch.cx=m.x; pinch.cy=m.y;
+    pinch.delta=delta; // consumed each frame in render
+  }
+},{passive:false});
+
+canvas.addEventListener('touchend',function(e){
+  e.preventDefault();
+  if(e.touches.length===0){pUp(); pinch.active=false; pinch.delta=0;}
+  else if(e.touches.length===1){pinch.active=false; pinch.delta=0;}
+},{passive:false});
+
+// ── post-process helpers ──────────────────────────────────────────────────
+function bindQuad(prog){
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER,quadBuf);
+  var a=gl.getAttribLocation(prog,'aPos');
+  gl.enableVertexAttribArray(a);
+  gl.vertexAttribPointer(a,2,gl.FLOAT,false,0,0);
+}
+function blurPass(prog,src,dstFb){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dstFb);
+  gl.viewport(0,0,W,H);gl.clear(gl.COLOR_BUFFER_BIT);
+  bindQuad(prog);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,src);
+  gl.uniform1i(gl.getUniformLocation(prog,'uTex'),0);
+  gl.uniform2f(gl.getUniformLocation(prog,'uRes'),W,H);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+
+// ── audio ─────────────────────────────────────────────────────────────────
+var audioCtx=null,droneNodes=null;
+function initAudio(){
+  if(audioCtx)return;
+  audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  var master=audioCtx.createGain(); master.gain.value=0; master.connect(audioCtx.destination);
+  var conv=audioCtx.createConvolver();
+  var irLen=audioCtx.sampleRate*4,ir=audioCtx.createBuffer(2,irLen,audioCtx.sampleRate);
+  for(var ch=0;ch<2;ch++){var d=ir.getChannelData(ch);for(var i=0;i<irLen;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/irLen,2.5);}
+  conv.buffer=ir; conv.connect(master);
+  var dry=audioCtx.createGain();dry.gain.value=0.35;dry.connect(master);
+  var wet=audioCtx.createGain();wet.gain.value=0.65;wet.connect(conv);
+  var lpf=audioCtx.createBiquadFilter();lpf.type='lowpass';lpf.frequency.value=900;lpf.Q.value=1.2;
+  lpf.connect(dry);lpf.connect(wet);
+  var freqs=[55,82.4,110,164.8,220];
+  freqs.forEach(function(freq,idx){
+    var g=audioCtx.createGain();g.gain.value=[0.22,0.14,0.10,0.06,0.04][idx];g.connect(lpf);
+    [-0.5,0,0.5].forEach(function(det){
+      var o=audioCtx.createOscillator();o.type=idx<2?'sine':'triangle';
+      o.frequency.value=freq;o.detune.value=det*4;o.connect(g);o.start();
+    });
+  });
+  var lfo=audioCtx.createOscillator();lfo.frequency.value=0.07;
+  var lg=audioCtx.createGain();lg.gain.value=0.06;lfo.connect(lg);lg.connect(master.gain);lfo.start();
+  var flfo=audioCtx.createOscillator();flfo.frequency.value=0.04;
+  var flg=audioCtx.createGain();flg.gain.value=280;flfo.connect(flg);flg.connect(lpf.frequency);flfo.start();
+  master.gain.setTargetAtTime(0.10,audioCtx.currentTime,4);
+  droneNodes={master:master,lpf:lpf};
+  // Bass
+  var bg=audioCtx.createGain();bg.gain.value=0;bg.connect(audioCtx.destination);
+  var blpf=audioCtx.createBiquadFilter();blpf.type='lowpass';blpf.frequency.value=120;blpf.Q.value=0.7;blpf.connect(bg);
+  [[-3],[3]].forEach(function(det){
+    var o=audioCtx.createOscillator();o.type='sine';o.frequency.value=36;o.detune.value=det[0];o.connect(blpf);o.start();
+  });
+  var blfo=audioCtx.createOscillator();blfo.frequency.value=0.12;
+  var blg=audioCtx.createGain();blg.gain.value=4;blfo.connect(blg);blfo.start();
+  droneNodes.bassGain=bg;
+  bg.gain.setTargetAtTime(0.18,audioCtx.currentTime,5);
+}
+var lastE={speed:0,alpha:0.2};
+function updateAudio(){
+  if(!audioCtx||!droneNodes)return;
+  var sp=0,al=0;
+  for(var i=0;i<webs.length;i++){sp+=Math.sqrt(webs[i].vx*webs[i].vx+webs[i].vy*webs[i].vy);al+=webs[i].alpha;}
+  sp/=webs.length;al/=webs.length;
+  lastE.speed=lastE.speed*0.92+sp*0.08;lastE.alpha=lastE.alpha*0.95+al*0.05;
+  var t=audioCtx.currentTime;
+  droneNodes.lpf.frequency.setTargetAtTime(Math.min(400+lastE.speed*4000,1800),t,0.8);
+  var mv=Math.min(0.05+lastE.alpha*0.18,0.14);
+  droneNodes.master.gain.setTargetAtTime(mv,t,2.5);
+  if(droneNodes.bassGain)droneNodes.bassGain.gain.setTargetAtTime(Math.max(0,0.18*(1-mv/0.14)),t,3);
+  // Pinch scale bends pitch: spread = higher, contract = lower
+  if(pinch.active&&droneNodes.lpf){
+    var pinchRatio=Math.max(0.5,Math.min(pinch.scale,3.0));
+    var pitchBend=Math.log(pinchRatio)/Math.log(2);
+    droneNodes.lpf.frequency.setTargetAtTime(Math.min(400+pitchBend*800,2000),t,0.15);
+  }
+
+  // Gyroscope modulation:
+  // left/right tilt (gamma) → detune the main drone (pitch wobble)
+  // forward/back tilt (beta) → swell bass volume
+  if(gyro.active&&droneNodes.master){
+    // gamma (-1..1) modulates master detune via filter brightness
+    var gyroBright = 600 + gyro.x * 500; // 100..1100 Hz
+    if(!pinch.active) // don't fight with pinch
+      droneNodes.lpf.frequency.setTargetAtTime(Math.max(80,Math.min(gyroBright,1600)),t,0.6);
+    // beta (-1..1): tilt forward = louder bass, tilt back = quieter
+    if(droneNodes.bassGain){
+      var gyroBassvol = Math.max(0, Math.min(0.28, 0.10 + gyro.y * 0.18));
+      droneNodes.bassGain.gain.setTargetAtTime(gyroBassvol, t, 0.8);
+    }
+  }
+}
+canvas.addEventListener('mousedown',function(){initAudio();});
+canvas.addEventListener('touchstart',function(){initAudio();},{passive:true});
+var btn=document.createElement('div');
+btn.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 22px;border:1px solid rgba(0,200,150,0.4);color:rgba(0,220,160,0.7);font:13px/1 monospace;letter-spacing:.12em;cursor:pointer;background:rgba(0,0,0,0.5);border-radius:3px;user-select:none;transition:opacity .4s;z-index:10;';
+btn.textContent='▶ SOUND';
+btn.addEventListener('click',function(){initAudio();btn.style.opacity='0';setTimeout(function(){btn.remove();},500);});
+document.body.appendChild(btn);
+
+// ── render loop ───────────────────────────────────────────────────────────
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+
+function render(){
+  requestAnimationFrame(render);
+  updateAudio();
+
+  // Gyroscope tilt — nudges all webs gently in tilt direction
+  if(gyro.active){
+    var gx = gyro.x * 0.012; // max ~0.012 px/frame push
+    var gy = gyro.y * 0.010;
+    for(var i=0;i<webs.length;i++){
+      webs[i].vx += gx;
+      webs[i].vy += gy;
+    }
+  }
+
+  // Pointer forces
+  for(var i=0;i<webs.length;i++){
+    var w=webs[i];
+    var dx=w.cx-ptr.x,dy=w.cy-ptr.y,d=Math.sqrt(dx*dx+dy*dy);
+    if(ptr.down){
+      if(d<260&&d>0.1){var inf=Math.pow(1-d/260,1.4);w.vx+=ptr.dx*inf*0.06;w.vy+=ptr.dy*inf*0.06;}
+    } else {
+      if(d<160&&d>0.1){var f=(160-d)/160*0.07;w.vx+=dx/d*f;w.vy+=dy/d*f;}
+    }
+  }
+
+  // Pinch forces — expand pushes webs outward, contract pulls them in
+  if(pinch.active&&pinch.delta){
+    var pd=pinch.delta;
+    for(var i=0;i<webs.length;i++){
+      var w=webs[i];
+      var dx=w.cx-pinch.cx, dy=w.cy-pinch.cy;
+      var d=Math.sqrt(dx*dx+dy*dy);
+      if(d<320&&d>0.1){
+        var inf=Math.pow(1-d/320,1.2);
+        // positive delta = fingers spread = push webs outward
+        w.vx+=dx/d*pd*inf*18;
+        w.vy+=dy/d*pd*inf*18;
+      }
+    }
+    pinch.delta=0;
+  }
+
+  // 1. Draw webs → fboSharp
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fboSharp.fb);
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0,0,0.008,1);gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(strandProg);
+  gl.uniform2f(uRes,W,H);
+  gl.uniform1f(uW,1.3);
+  for(var i=0;i<webs.length;i++){webs[i].update();webs[i].draw();}
+
+  // 2. Blur
+  gl.clearColor(0,0,0,1);
+  blurPass(blurHP,fboSharp.tex,fboPingA.fb);
+  for(var p=0;p<3;p++){blurPass(blurVP,fboPingA.tex,fboPingB.fb);blurPass(blurHP,fboPingB.tex,fboPingA.fb);}
+
+  // 3. Composite
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0,0,0.008,1);gl.clear(gl.COLOR_BUFFER_BIT);
+  bindQuad(compP);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,fboSharp.tex);
+  gl.uniform1i(gl.getUniformLocation(compP,'uSharp'),0);
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,fboPingA.tex);
+  gl.uniform1i(gl.getUniformLocation(compP,'uBlur'),1);
+  gl.uniform1f(gl.getUniformLocation(compP,'uBloom'),0.9);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+
+requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
