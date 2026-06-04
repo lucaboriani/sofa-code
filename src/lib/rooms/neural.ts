@@ -21,6 +21,19 @@ const sharedState = {
 // ─── Audio factory ────────────────────────────────────────────────────────────
 
 export const createAudio = (ctx: AudioContext): RoomAudio => {
+  // ── Mic analyser (drives sharedState.rms → spike rate in mount) ─────────────
+  // Analysis only: the mic source connects to the analyser, never to destination.
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  const bins = new Uint8Array(analyser.frequencyBinCount);
+
+  let mediaStream: MediaStream | null = null;
+  navigator.mediaDevices?.getUserMedia({ audio: true }).then(stream => {
+    mediaStream = stream;
+    const src = ctx.createMediaStreamSource(stream);
+    src.connect(analyser);
+  }).catch(() => { /* permission denied — rms stays 0, drone still runs */ });
+
   // ── Master output ────────────────────────────────────────────────────────────
   const droneGain = ctx.createGain();
   droneGain.gain.value = 0.07;
@@ -93,6 +106,12 @@ export const createAudio = (ctx: AudioContext): RoomAudio => {
   return {
     node: droneGain,
     tick() {
+      // Mic level → sharedState.rms (read by mount each frame to boost spikes)
+      analyser.getByteFrequencyData(bins);
+      let sum = 0;
+      for (let i = 0; i < bins.length; i++) sum += bins[i] * bins[i];
+      sharedState.rms = Math.sqrt(sum / bins.length) / 255;
+
       // Drone modulation from simulation state
       const t = ctx.currentTime;
       const speed = sharedState.simSpeed;
@@ -123,6 +142,14 @@ export const createAudio = (ctx: AudioContext): RoomAudio => {
       // Master gain tracks speed subtly
       const targetGain = speed < 0.05 ? 0.005 : 0.06 + Math.min(speed, 3) * 0.012;
       droneGain.gain.setTargetAtTime(targetGain, t, 0.6);
+    },
+    dispose() {
+      // Stop mic capture so the browser recording indicator turns off
+      if (mediaStream) {
+        for (const track of mediaStream.getTracks()) track.stop();
+        mediaStream = null;
+      }
+      sharedState.rms = 0;
     }
   };
 };
@@ -144,10 +171,12 @@ const FS_LINE = `
   precision mediump float;
   uniform vec3 uBaseColor;
   uniform vec3 uGlowColor;
+  uniform float uAudio;
   varying float vBright;
   void main(){
-    vec3 col = mix(uBaseColor, uGlowColor, vBright);
-    float a   = mix(0.55, 1.0, vBright);
+    float b   = clamp(vBright + uAudio * 0.35, 0.0, 1.0);
+    vec3 col = mix(uBaseColor, uGlowColor, b);
+    float a   = mix(0.55, 1.0, b);
     gl_FragColor = vec4(col * a, a);
   }
 `;
@@ -479,6 +508,10 @@ export const mount: RoomMount = (canvas, opts) => {
   let mx = 0, my = 0;
   let simSpeed = 0.08;
 
+  // ── Audio-reactive state (rms written by createAudio tick) ──
+  // Envelope follower over normalized mic level: fast attack, slow release.
+  let audioLevel = 0;
+
   // ── Pointer interaction (full quality only — preview is a card, drag conflicts) ──
   const pointerCleanups: Array<() => void> = [];
 
@@ -589,12 +622,25 @@ export const mount: RoomMount = (canvas, opts) => {
     const rawDt = Math.min(_dtMs / 1000, 0.05);
     const time = tMs / 1000;
 
-    // Audio reactivity: boost spike rate and speed with RMS
-    const rms = sharedState.rms;
-    const audioBoost = 1 + rms * 2;
+    // Audio reactivity: mic level drives glow + speed; level jumps fire surges.
+    // Speech rms sits around 0.1–0.3, so normalize ×4 toward [0,1].
+    const micTarget = Math.min(1, sharedState.rms * 4);
+    const onset = micTarget - audioLevel > 0.25;
+    const envRate = micTarget > audioLevel ? 10 : 2.5;
+    audioLevel += (micTarget - audioLevel) * Math.min(1, rawDt * envRate);
+    const audioBoost = 1 + audioLevel * 2.5;
     const effectiveSpeed = simSpeed * audioBoost;
     const effectiveSpikeRate = spikeRate * audioBoost;
     const dt = rawDt * effectiveSpeed;
+
+    // Onset → retire oldest impulses and fire a fresh surge (pool is usually
+    // saturated at MAX_IMP, so plain spawn boosts would be silently dropped)
+    if (onset) {
+      for (let k = 0; k < 8; k++) {
+        if (impulses.length >= MAX_IMP) impulses.shift();
+        spawnImpulse();
+      }
+    }
 
     angle += rawDt * 0.10 * Math.min(effectiveSpeed, 1.5);
 
@@ -669,6 +715,7 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.uniformMatrix4fv(uLoc(gl, progLine, 'uMVP'), false, mvp);
     gl.uniform3f(uLoc(gl, progLine, 'uBaseColor'), 0.22, 0.05, 0.38);
     gl.uniform3f(uLoc(gl, progLine, 'uGlowColor'), 0.90, 0.35, 1.0);
+    gl.uniform1f(uLoc(gl, progLine, 'uAudio'), audioLevel);
     setAttr(gl, progLine, 'aPos',    posB,    3);
     setAttr(gl, progLine, 'aBright', brightB, 1);
     gl.drawArrays(gl.LINES, 0, NSEG * 2);
@@ -681,8 +728,8 @@ export const mount: RoomMount = (canvas, opts) => {
     // Outer glow
     gl.uniform3f(uLoc(gl, progPt, 'uColor'), 0.55, 0.1, 0.9);
     for (let i = 0; i < nodes.length; i++) {
-      somaAlDyn[i]  = 0.22 + 0.06 * Math.sin(time * 0.6 + i * 2.1);
-      somaGlowSz[i] = somaSzF[i] * 1.4;
+      somaAlDyn[i]  = 0.22 + 0.06 * Math.sin(time * 0.6 + i * 2.1) + audioLevel * 0.4;
+      somaGlowSz[i] = somaSzF[i] * (1.4 + audioLevel * 2.5);
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, somaAlB);
     gl.bufferData(gl.ARRAY_BUFFER, somaAlDyn, gl.DYNAMIC_DRAW);

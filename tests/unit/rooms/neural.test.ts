@@ -1,6 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mount, createAudio } from '@/lib/rooms/neural';
-import { makeFakeAudio } from '../../fixtures/fake-audio';
+import { makeFakeAudio, makeFakeMediaStream } from '../../fixtures/fake-audio';
+import type { FakeAnalyser } from '../../fixtures/fake-audio';
+
+function stubMic(impl: () => Promise<unknown>): ReturnType<typeof vi.fn> {
+  const getUserMedia = vi.fn(impl);
+  Object.defineProperty(navigator, 'mediaDevices', {
+    value: { getUserMedia },
+    configurable: true
+  });
+  return getUserMedia;
+}
+
+/** flush the getUserMedia promise chain */
+const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
 
 function makeProxyGL(): unknown {
   return new Proxy({}, {
@@ -37,21 +50,61 @@ describe('neural', () => {
   });
 
   it('createAudio returns a node usable as RoomAudio', () => {
-    // stub mediaDevices to avoid actual mic prompt in JSDOM
-    Object.defineProperty(navigator, 'mediaDevices', {
-      value: { getUserMedia: () => Promise.reject(new Error('no mic in test')) },
-      configurable: true
-    });
+    stubMic(() => Promise.reject(new Error('no mic in test')));
     const fake = makeFakeAudio();
-    // Patch createAnalyser, createMediaStreamSource on fake
-    (fake as unknown as { createAnalyser: () => unknown }).createAnalyser = () => ({
-      fftSize: 256,
-      frequencyBinCount: 128,
-      getByteFrequencyData: (_a: Uint8Array) => {}
-    });
-    (fake as unknown as { createMediaStreamSource: (s: unknown) => { connect: (n: unknown) => void } }).createMediaStreamSource = () => ({ connect: () => {} });
     const audio = createAudio(fake as unknown as AudioContext);
     expect(audio.node).toBeDefined();
     expect(typeof audio.tick).toBe('function');
+  });
+
+  it('createAudio requests the microphone (audio only)', () => {
+    const getUserMedia = stubMic(() => Promise.resolve(makeFakeMediaStream()));
+    const fake = makeFakeAudio();
+    createAudio(fake as unknown as AudioContext);
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+  });
+
+  it('routes the mic stream into an analyser once permission is granted', async () => {
+    const stream = makeFakeMediaStream();
+    stubMic(() => Promise.resolve(stream));
+    const fake = makeFakeAudio();
+    createAudio(fake as unknown as AudioContext);
+    await flush();
+    expect(fake._mediaStreamSources).toHaveLength(1);
+    expect(fake._mediaStreamSources[0].stream).toBe(stream);
+    // connected to an analyser, never to destination (analysis only)
+    const dest = fake._mediaStreamSources[0]._connectedTo;
+    expect(dest).toHaveLength(1);
+    expect(typeof (dest[0] as FakeAnalyser).getByteFrequencyData).toBe('function');
+  });
+
+  it('tick() reads mic frequency data every frame', async () => {
+    stubMic(() => Promise.resolve(makeFakeMediaStream()));
+    const fake = makeFakeAudio();
+    const audio = createAudio(fake as unknown as AudioContext);
+    await flush();
+    const analyser = fake._mediaStreamSources[0]._connectedTo[0] as FakeAnalyser;
+    audio.tick!();
+    audio.tick!();
+    expect(analyser._reads).toBe(2);
+  });
+
+  it('tick() survives mic permission denial (rms stays 0, drone still runs)', async () => {
+    stubMic(() => Promise.reject(new DOMException('denied', 'NotAllowedError')));
+    const fake = makeFakeAudio();
+    const audio = createAudio(fake as unknown as AudioContext);
+    await flush();
+    expect(() => audio.tick!()).not.toThrow();
+  });
+
+  it('dispose() stops mic tracks so the recording indicator turns off', async () => {
+    const stream = makeFakeMediaStream(2);
+    stubMic(() => Promise.resolve(stream));
+    const fake = makeFakeAudio();
+    const audio = createAudio(fake as unknown as AudioContext);
+    await flush();
+    expect(typeof audio.dispose).toBe('function');
+    audio.dispose!();
+    for (const t of stream.getTracks()) expect(t._stopped).toBe(true);
   });
 });

@@ -98,6 +98,32 @@ describe('AudioBus', () => {
     expect(ticks.length).toBeGreaterThan(0);
     await bus.deactivate(0);
   });
+
+  it('deactivate calls the room dispose after the fade', async () => {
+    const dispose = vi.fn();
+    bus.register('a', (ctx) => ({
+      node: (ctx as unknown as { createGain(): AudioNode }).createGain(),
+      dispose
+    }));
+    await bus.activate('a', 100);
+    await bus.deactivate(100);
+    expect(dispose).not.toHaveBeenCalled(); // not before the fade completes
+    await new Promise(r => setTimeout(r, 200));
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('activate(b) while active(a) disposes a after the crossfade', async () => {
+    const disposeA = vi.fn();
+    bus.register('a', (ctx) => ({
+      node: (ctx as unknown as { createGain(): AudioNode }).createGain(),
+      dispose: disposeA
+    }));
+    bus.register('b', audioFactory());
+    await bus.activate('a', 100);
+    await bus.activate('b', 100);
+    await new Promise(r => setTimeout(r, 200));
+    expect(disposeA).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('getAudioBus singleton', () => {

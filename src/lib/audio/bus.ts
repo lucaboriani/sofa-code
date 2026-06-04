@@ -1,4 +1,9 @@
-export interface RoomAudio { node: AudioNode; tick?(): void; }
+export interface RoomAudio {
+  node: AudioNode;
+  tick?(): void;
+  /** Release resources the graph disconnect can't reach (e.g. stop mic MediaStream tracks). */
+  dispose?(): void;
+}
 export type AudioFactory = (ctx: AudioContext) => RoomAudio;
 
 export interface Active {
@@ -6,6 +11,7 @@ export interface Active {
   node: AudioNode;
   gain: GainNode;
   tick?: () => void;
+  dispose?: () => void;
 }
 
 export class AudioBus {
@@ -69,10 +75,17 @@ export class AudioBus {
       previous.gain.gain.linearRampToValueAtTime(0, now + fadeSec);
       setTimeout(() => {
         try { previous.node.disconnect(); previous.gain.disconnect(); } catch { /* idempotent */ }
+        previous.dispose?.();
       }, fadeMs + 50);
     }
 
-    this.active = { slug, node, gain, ...(result.tick ? { tick: result.tick } : {}) };
+    this.active = {
+      slug,
+      node,
+      gain,
+      ...(result.tick ? { tick: result.tick } : {}),
+      ...(result.dispose ? { dispose: result.dispose } : {})
+    };
     this.ensureLoop();
   }
 
@@ -85,6 +98,7 @@ export class AudioBus {
     a.gain.gain.linearRampToValueAtTime(0, now + fadeSec);
     setTimeout(() => {
       try { a.node.disconnect(); a.gain.disconnect(); } catch { /* idempotent */ }
+      a.dispose?.();
     }, fadeMs + 50);
     this.active = null;
     this.stopLoop();

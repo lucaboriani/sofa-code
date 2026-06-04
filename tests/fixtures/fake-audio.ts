@@ -59,6 +59,42 @@ export interface FakeAudioContext {
   };
   createConvolver(): { buffer: unknown; connect(d: unknown): void; disconnect(): void };
   createConstantSource(): { offset: ReturnType<typeof makeAudioParam>; connect(d: unknown): void; start(): void };
+  createAnalyser(): FakeAnalyser;
+  createMediaStreamSource(stream: unknown): FakeMediaStreamSource;
+  /** test hook: streams passed to createMediaStreamSource */
+  _mediaStreamSources: FakeMediaStreamSource[];
+}
+
+export interface FakeAnalyser {
+  fftSize: number;
+  frequencyBinCount: number;
+  /** test hook: byte value copied into every bin on getByteFrequencyData */
+  _fillValue: number;
+  /** test hook: number of getByteFrequencyData calls */
+  _reads: number;
+  getByteFrequencyData(arr: Uint8Array): void;
+  connect(d: unknown): void;
+  disconnect(): void;
+}
+
+export interface FakeMediaStreamSource {
+  stream: unknown;
+  /** test hook: nodes this source was connected to */
+  _connectedTo: unknown[];
+  connect(d: unknown): void;
+  disconnect(): void;
+}
+
+export interface FakeMediaStreamTrack { stop(): void; _stopped: boolean; }
+export interface FakeMediaStream { getTracks(): FakeMediaStreamTrack[]; }
+
+export function makeFakeMediaStream(trackCount = 1): FakeMediaStream {
+  const tracks: FakeMediaStreamTrack[] = [];
+  for (let i = 0; i < trackCount; i++) {
+    const t: FakeMediaStreamTrack = { _stopped: false, stop() { t._stopped = true; } };
+    tracks.push(t);
+  }
+  return { getTracks: () => tracks };
 }
 
 export function makeFakeAudio(): FakeAudioContext {
@@ -118,7 +154,33 @@ export function makeFakeAudio(): FakeAudioContext {
     },
     createConstantSource() {
       return { offset: makeAudioParam(0), connect() {}, start() {} };
-    }
+    },
+    createAnalyser() {
+      const a: FakeAnalyser = {
+        fftSize: 2048,
+        get frequencyBinCount() { return a.fftSize / 2; },
+        _fillValue: 0,
+        _reads: 0,
+        getByteFrequencyData(arr: Uint8Array) {
+          a._reads++;
+          arr.fill(a._fillValue);
+        },
+        connect() {},
+        disconnect() {}
+      };
+      return a;
+    },
+    createMediaStreamSource(stream: unknown) {
+      const s: FakeMediaStreamSource = {
+        stream,
+        _connectedTo: [],
+        connect(d: unknown) { s._connectedTo.push(d); },
+        disconnect() {}
+      };
+      ctx._mediaStreamSources.push(s);
+      return s;
+    },
+    _mediaStreamSources: []
   };
   return ctx;
 }
