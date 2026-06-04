@@ -9,6 +9,18 @@ export interface Edge {
   laterals: Vec3[][];
 }
 
+/** A spike travelling along an edge path (main dendrite or lateral). */
+export interface Impulse {
+  pts: Vec3[];
+  segStart: number | null;
+  segCount: number | null;
+  isLateral: boolean;
+  t: number;
+  speed: number;
+  tail: number;
+  bright: number;
+}
+
 export function buildPath(start: Vec3, end: Vec3, depth: number): Vec3[] {
   function subdivide(arr: Vec3[], d: number): Vec3[] {
     if (d === 0) return arr;

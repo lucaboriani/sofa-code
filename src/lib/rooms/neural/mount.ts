@@ -6,13 +6,16 @@ import { createRafLoop } from '@/lib/webgl/raf';
 import { mul4, perspective, rotY, rotX, transl } from '@/lib/webgl/math';
 import { sharedState } from './state';
 import { VS_LINE, FS_LINE, VS_PT, FS_PT } from './shaders';
-import { type Vec3, rnd, lerp } from './math';
-import { buildGeometry } from './geometry';
+import { rnd, lerp } from './math';
+import { buildGeometry, type Impulse } from './geometry';
 
 // ─── Quality parameters ───────────────────────────────────────────────────────
 
 const NEURON_COUNT = { preview: 48, full: 220 } as const;
 const SPIKE_RATE   = { preview: 0.2, full: 0.6 } as const;
+
+/** Collision flash between two impulses, drawn for a few frames. */
+interface Burst { x: number; y: number; z: number; life: number; }
 
 // ─── GL helpers ───────────────────────────────────────────────────────────────
 
@@ -110,17 +113,6 @@ export const mount: RoomMount = (canvas, opts) => {
   const tmpSzB = gl.createBuffer()!;
 
   // ── Impulse state ──
-  interface Impulse {
-    pts: Vec3[];
-    segStart: number | null;
-    segCount: number | null;
-    isLateral: boolean;
-    t: number;
-    speed: number;
-    tail: number;
-    bright: number;
-  }
-
   const impulses: Impulse[] = [];
 
   function spawnImpulse(): void {
@@ -149,7 +141,6 @@ export const mount: RoomMount = (canvas, opts) => {
   }
 
   // ── Burst state ──
-  interface Burst { x: number; y: number; z: number; life: number; }
   const bursts: Burst[] = [];
   const COLL_DIST2 = 0.08 * 0.08;
 
