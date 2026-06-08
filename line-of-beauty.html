@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Line of Beauty — Hogarth</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; }
+  canvas { position:fixed; top:0; left:0; width:100%; height:100%; }
+  #audiobtn {
+    position:fixed; top:20px; right:20px;
+    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2);
+    color:rgba(255,255,255,0.7); font:italic 12px Georgia,serif;
+    letter-spacing:.15em; padding:8px 16px; cursor:pointer; z-index:10;
+    border-radius:2px; transition:background 0.3s;
+  }
+  #audiobtn:hover { background:rgba(255,255,255,0.15); }
+  #hint {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    font:italic 11px Georgia,serif; color:rgba(255,255,255,0.08);
+    letter-spacing:.3em; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="ov"></canvas>
+<button id="audiobtn">♪ enable audio</button>
+<div id="hint">the line of beauty — w. hogarth, 1753 · double tap to regenerate</div>
+<script>
+const PHI = 1.6180339887;
+let audioStarted = false;
+let filterNode = null;
+let masterGain = null;
+let dragVel = 0, isDragging = false;
+
+// String hit state: which grid axis is lit, excitation amount, pitch offset
+let struckAxis = -1, struckExcite = 0, struckPitch = 1.0, struckOsc = null, struckProximity = 1.0;
+let hoverAxis = -1, lastHoverAxis = -1, hoverCooldown = 0;
+const c  = document.getElementById('gl');
+const ov = document.getElementById('ov');
+const ctx = ov.getContext('2d');
+
+function resize(){
+  const dpr = window.devicePixelRatio || 1;
+  const W = window.innerWidth, H = window.innerHeight;
+  // WebGL canvas
+  c.width  = Math.round(W * dpr);
+  c.height = Math.round(H * dpr);
+  c.style.width  = W + 'px';
+  c.style.height = H + 'px';
+  // 2D overlay — high-DPI
+  ov.width  = Math.round(W * dpr);
+  ov.height = Math.round(H * dpr);
+  ov.style.width  = W + 'px';
+  ov.style.height = H + 'px';
+  // Scale ctx so coordinates stay in CSS pixels
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resize();
+window.addEventListener('resize',resize);
+
+// ── WebGL ─────────────────────────────────────────────────────────────────────
+const gl = c.getContext('webgl');
+if(!gl){ document.body.innerHTML='<p style="color:white;padding:2rem">Open directly in browser.</p>'; }
+
+const vert=`attribute vec2 pos;attribute float alpha;varying float vA;uniform vec2 res;
+void main(){vA=alpha;vec2 cl=(pos/res)*2.0-1.0;gl_Position=vec4(cl.x,-cl.y,0,1);}`;
+const frag=`precision mediump float;varying float vA;uniform vec3 col;
+void main(){gl_FragColor=vec4(col,vA);}`;
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,vert));
+gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,frag));
+gl.linkProgram(prog);gl.useProgram(prog);
+const aPos=gl.getAttribLocation(prog,'pos');
+const aAlpha=gl.getAttribLocation(prog,'alpha');
+const uRes=gl.getUniformLocation(prog,'res');
+const uCol=gl.getUniformLocation(prog,'col');
+const bPos=gl.createBuffer(),bAlpha=gl.createBuffer();
+gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+
+// ── colour ────────────────────────────────────────────────────────────────────
+function hsl(h,s,l){
+  h/=360;
+  function f(n){const k=(n+h*12)%12,a=s*Math.min(l,1-l);return l-a*Math.max(-1,Math.min(k-3,9-k,1));}
+  return[f(0),f(8),f(4)];
+}
+function randCol(){
+  const p=[
+    ()=>hsl(  5+Math.random()*12,.92,.54),
+    ()=>hsl(352+Math.random()*12,.92,.54),
+    ()=>hsl( 25+Math.random()*13,.95,.56),
+    ()=>hsl(282+Math.random()*28,.78,.58),
+  ];
+  return p[Math.floor(Math.random()*p.length)]();
+}
+
+// ── params — the curve shape morphs slowly via independent sinusoids ───────────
+let P, t=0;
+
+function randomize(){
+  // Each geometric parameter has its own slow oscillation frequency & phase
+  // so reachTop, reachBot, tensTop, tensBot all drift independently over time
+  P={
+    color:    randCol(),
+    // base values
+    reachTopBase: 0.28+Math.random()*0.20,
+    reachBotBase: 0.18+Math.random()*0.20,
+    tensTopBase:  0.55+Math.random()*0.25,
+    tensBotBase:  0.50+Math.random()*0.25,
+    halfHBase:    0.30+Math.random()*0.10,
+    // morph frequencies (very slow)
+    freqRT: 0.00120+Math.random()*0.00080,
+    freqRB: 0.00140+Math.random()*0.00080,
+    freqTT: 0.00110+Math.random()*0.00070,
+    freqTB: 0.00130+Math.random()*0.00070,
+    freqHH: 0.00080+Math.random()*0.00060,
+    // morph amplitudes (how much each param can swing)
+    ampRT: 0.10, ampRB: 0.10,
+    ampTT: 0.18, ampTB: 0.18,
+    ampHH: 0.06,
+    // random phases
+    phRT: Math.random()*Math.PI*2, phRB: Math.random()*Math.PI*2,
+    phTT: Math.random()*Math.PI*2, phTB: Math.random()*Math.PI*2,
+    phHH: Math.random()*Math.PI*2,
+    // rotation
+    rot:      Math.random()*Math.PI*2,
+    rotSpeed: 0.00025+Math.random()*0.00035,
+    // vertical drift
+    driftSpeed: 0.00014+Math.random()*0.00010,
+    driftAmp:   0.014,
+  };
+  t=0;
+}
+randomize();
+
+// ── live param evaluation at frame ───────────────────────────────────────────
+function liveParams(frame){
+  return {
+    reachTop: P.reachTopBase + Math.sin(frame*P.freqRT+P.phRT)*P.ampRT,
+    reachBot: P.reachBotBase + Math.sin(frame*P.freqRB+P.phRB)*P.ampRB,
+    tensTop:  P.tensTopBase  + Math.sin(frame*P.freqTT+P.phTT)*P.ampTT,
+    tensBot:  P.tensBotBase  + Math.sin(frame*P.freqTB+P.phTB)*P.ampTB,
+    halfH:    P.halfHBase    + Math.sin(frame*P.freqHH+P.phHH)*P.ampHH,
+  };
+}
+
+// ── control points ────────────────────────────────────────────────────────────
+function getCtrl(frame){
+  const lp = liveParams(frame);
+  const W=c.width,H=c.height,cx=W/2,cy=H/2;
+  const hH=H*lp.halfH;
+  const d=Math.sin(frame*P.driftSpeed)*H*P.driftAmp;
+  const yTop=cy-hH+d, yMid=cy+d, yBot=cy+hH+d;
+  const rT=W*lp.reachTop, rB=W*lp.reachBot;
+  const c1y=yTop+(yMid-yTop)*lp.tensTop*0.4;
+  const c2y=yMid-(yMid-yTop)*(1-lp.tensTop)*0.4;
+  const c1=[cx-rT,c1y], c2=[cx-rT,c2y];
+  const c3=[2*cx-c2[0], 2*yMid-c2[1]];
+  const c4y=yBot-(yBot-yMid)*lp.tensBot*0.4;
+  const c4=[cx+rB,c4y];
+  return{top:[cx,yTop],mid:[cx,yMid],bot:[cx,yBot],c1,c2,c3,c4};
+}
+
+function rotPt(p,a){
+  const cx=c.width/2,cy=c.height/2,dx=p[0]-cx,dy=p[1]-cy;
+  return[cx+dx*Math.cos(a)+dy*Math.sin(a), cy-dx*Math.sin(a)+dy*Math.cos(a)];
+}
+
+// ── S evaluation ──────────────────────────────────────────────────────────────
+function evalS(u,frame){
+  const{top,mid,bot,c1,c2,c3,c4}=getCtrl(frame);
+  function bez(t,p0,p1,p2,p3){const m=1-t;return m*m*m*p0+3*m*m*t*p1+3*m*t*t*p2+t*t*t*p3;}
+  let x,y;
+  if(u<=0.5){const s=u*2;x=bez(s,top[0],c1[0],c2[0],mid[0]);y=bez(s,top[1],c1[1],c2[1],mid[1]);}
+  else{const s=(u-0.5)*2;x=bez(s,mid[0],c3[0],c4[0],bot[0]);y=bez(s,mid[1],c3[1],c4[1],bot[1]);}
+  return rotPt([x,y],P.rot+frame*P.rotSpeed);
+}
+
+// ── WebGL ribbon ──────────────────────────────────────────────────────────────
+const N=500;
+function buildRibbon(frame,ga){
+  const spine=[];
+  for(let i=0;i<=N;i++) spine.push(evalS(i/N,frame));
+  const pos=[],alp=[];
+  for(let i=0;i<=N;i++){
+    const p=spine[i],prev=spine[Math.max(0,i-1)],next=spine[Math.min(N,i+1)];
+    const dx=next[0]-prev[0],dy=next[1]-prev[1],len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=-dy/len,ny=dx/len,fade=Math.sin(i/N*Math.PI)*ga;
+    pos.push(p[0]+nx*1.2,p[1]+ny*1.2,p[0]-nx*1.2,p[1]-ny*1.2);
+    alp.push(fade,fade);
+  }
+  return{pos:new Float32Array(pos),alp:new Float32Array(alp),count:(N+1)*2};
+}
+
+// ── String hit detection ─────────────────────────────────────────────────────
+let currentAxes = [];
+
+// Distance from point P to infinite line through A,B
+function distToLine(px,py,ax,ay,bx,by){
+  const dx=bx-ax,dy=by-ay,len=Math.sqrt(dx*dx+dy*dy)||1;
+  return Math.abs((py-ay)*dx-(px-ax)*dy)/len;
+}
+
+function hitAxis(mx,my){
+  let best=-1, bestDist=Infinity;
+  for(let i=0;i<currentAxes.length;i++){
+    const [a,b]=currentAxes[i];
+    const d=distToLine(mx,my,a[0],a[1],b[0],b[1]);
+    if(d<bestDist){ bestDist=d; best=i; }
+  }
+  // Always return nearest axis — proximity, not exact hit
+  // Weight: closer = higher excitation
+  struckProximity = Math.max(0, 1 - bestDist/300);
+  return best;
+}
+
+// ── 2D construction overlay ───────────────────────────────────────────────────
+function drawConstruction(frame){
+  ctx.clearRect(0,0,ov.width,ov.height);
+  const angle=P.rot+frame*P.rotSpeed;
+  const{top,mid,bot,c1,c2,c3,c4}=getCtrl(frame);
+  const rTop=rotPt(top,angle),rMid=rotPt(mid,angle),rBot=rotPt(bot,angle);
+  const rC1=rotPt(c1,angle),rC2=rotPt(c2,angle);
+  const rC3=rotPt(c3,angle),rC4=rotPt(c4,angle);
+
+  const FAR=5000;
+  const GRID_LINES=18;   // parallels per side
+  const GRID_STEP=28;    // px between parallels
+
+  // Draw a full grid from axis defined by two points:
+  // one central axis line + GRID_LINES parallels on each side, fading out
+  function grid(a, b, baseAlpha, excite=0){
+    const dx=b[0]-a[0], dy=b[1]-a[1];
+    const len=Math.sqrt(dx*dx+dy*dy)||1;
+    const ax=dx/len, ay=dy/len;
+    const px=-ay, py=ax;
+
+    function gridLine(ox,oy,alpha,glow=false){
+      const sx=a[0]+ox, sy=a[1]+oy;
+      if(glow){
+        ctx.lineWidth=1.0+excite*2;
+        ctx.strokeStyle=`rgba(220,200,180,${alpha})`;
+      } else {
+        ctx.lineWidth=0.5;
+        ctx.strokeStyle=`rgba(110,110,110,${alpha})`;
+      }
+      // Snap to half-pixel for crispness
+      const x0=Math.round(sx-ax*FAR)+0.5, y0=Math.round(sy-ay*FAR)+0.5;
+      const x1=Math.round(sx+ax*FAR)+0.5, y1=Math.round(sy+ay*FAR)+0.5;
+      ctx.beginPath();
+      ctx.moveTo(x0,y0);
+      ctx.lineTo(x1,y1);
+      ctx.stroke();
+    }
+
+    // Vibration offset — make central string wobble when struck
+    const vibAmp = excite * 6 * Math.sin(t * 0.8);
+    const vox = px * vibAmp, voy = py * vibAmp;
+
+    gridLine(vox, voy, baseAlpha, excite>0.01);
+
+    for(let i=1;i<=GRID_LINES;i++){
+      const fade=Math.pow(1-i/GRID_LINES,1.4)*baseAlpha*0.85;
+      if(fade<0.01) continue;
+      const ox=px*i*GRID_STEP, oy=py*i*GRID_STEP;
+      gridLine( ox+vox*0.3,  oy+voy*0.3, fade);
+      gridLine(-ox+vox*0.3, -oy+voy*0.3, fade);
+    }
+  }
+
+  // Store current axis endpoints for hit detection
+  currentAxes = [
+    [rTop,rC1],[rC2,rMid],[rMid,rC3],[rC4,rBot],[rC1,rC2],[rC3,rC4]
+  ];
+  const baseAlphas = [0.62,0.58,0.58,0.62,0.42,0.42];
+
+  currentAxes.forEach(([a,b],i)=>{
+    const lit = (i === struckAxis);
+    const ex  = lit ? struckExcite : 0;
+    // Brighten the whole grid family when struck
+    const ba  = baseAlphas[i] * (1 + ex * 2.5);
+    grid(a, b, ba, lit ? ex : 0);
+  });
+
+  // Anchor dots
+  function dot(p,r){ctx.beginPath();ctx.arc(p[0],p[1],r,0,Math.PI*2);ctx.fill();}
+  ctx.fillStyle='rgba(90,90,90,0.80)';
+  dot(rTop,2.2);dot(rMid,2.2);dot(rBot,2.2);
+
+  // Decay excitation
+  if(struckExcite > 0) struckExcite *= 0.97;
+  else struckExcite = 0;
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+const TRAILS=24,TGAP=15;
+function draw(){
+  const W=c.width,H=c.height;
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.uniform2f(uRes,W,H);
+  gl.uniform3f(uCol,...P.color);
+  for(let g=TRAILS;g>=0;g--){
+    const ft=t-g*TGAP;if(ft<0) continue;
+    const a=g===0?0.95:Math.pow(1-g/TRAILS,3)*0.20;
+    const{pos,alp,count}=buildRibbon(ft,a);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.bufferData(gl.ARRAY_BUFFER,pos,gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(aPos);gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bAlpha);gl.bufferData(gl.ARRAY_BUFFER,alp,gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(aAlpha);gl.vertexAttribPointer(aAlpha,1,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,count);
+  }
+  drawConstruction(t);
+  updateFilter(P.rot + t * P.rotSpeed, dragVel, isDragging);
+  t++;
+  requestAnimationFrame(draw);
+}
+draw();
+
+let last=0, dragX=null;
+
+// Drag rotates the curve
+function onDragStart(x){ dragX=x; isDragging=true; dragVel=0; }
+function onDragMove(x){
+  if(dragX===null) return;
+  const dx=x-dragX;
+  dragVel=dx;
+  P.rot += dx*0.008;
+  dragX=x;
+}
+function onDragEnd(){ dragX=null; isDragging=false; }
+
+// Axis base pitches — golden ratio intervals from 110Hz
+const axisPitches = [
+  110 * Math.pow(PHI,  0),
+  110 * Math.pow(PHI,  1/PHI),
+  110 * Math.pow(PHI, -1/PHI),
+  110 * Math.pow(PHI,  1),
+  110 * Math.pow(PHI, -1),
+  110 * Math.pow(PHI,  PHI),
+];
+
+function hoverString(mx, my){
+  if(!masterGain) return;
+  const axis = hitAxis(mx, my);
+  hoverAxis = axis;
+
+  // Only trigger when crossing into a new axis zone
+  if(hoverCooldown > 0){ hoverCooldown--; return; }
+  if(axis === lastHoverAxis) return;
+  lastHoverAxis = axis;
+  hoverCooldown = 8; // frames before re-trigger on same axis
+
+  const ac  = masterGain.context;
+  const now = ac.currentTime;
+  const freq = axisPitches[axis];
+
+  // Excite the visual very softly
+  if(struckAxis !== axis){
+    struckAxis   = axis;
+    struckExcite = 0.15 + struckProximity * 0.12;
+  }
+
+  // Tiny whisper tone
+  const osc = ac.createOscillator();
+  osc.type  = 'sine';
+  osc.frequency.value = freq;
+  const gTone = ac.createGain();
+  gTone.gain.setValueAtTime(0.008 + struckProximity * 0.008, now);
+  gTone.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  osc.connect(gTone); gTone.connect(masterGain);
+  osc.start(now); osc.stop(now + 0.6);
+
+  // Tiny noise whisper
+  const bufLen = Math.floor(ac.sampleRate * 0.04);
+  const buf    = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const data   = buf.getChannelData(0);
+  for(let i=0;i<bufLen;i++) data[i] = (Math.random()*2-1);
+  const noise  = ac.createBufferSource();
+  noise.buffer = buf;
+  const nbp    = ac.createBiquadFilter();
+  nbp.type     = 'bandpass';
+  nbp.frequency.value = freq * 1.5;
+  nbp.Q.value  = 2;
+  const gNoise = ac.createGain();
+  gNoise.gain.setValueAtTime(0.01 + struckProximity * 0.008, now);
+  gNoise.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+  noise.connect(nbp); nbp.connect(gNoise); gNoise.connect(masterGain);
+  noise.start(now); noise.stop(now + 0.04);
+}
+
+function pluckString(mx, my){
+  if(!masterGain) return;
+  const axis = hitAxis(mx, my);
+  struckAxis   = axis;
+  struckExcite = 0.4 + struckProximity * 0.6;
+
+  const ac   = masterGain.context;
+  const now  = ac.currentTime;
+  const prox = struckProximity;
+
+  if(struckOsc){ try{struckOsc.stop();}catch(e){} struckOsc=null; }
+
+  const freq = axisPitches[axis];
+
+  // ── 1. Soft sine tone — light, barely there ──
+  const osc = ac.createOscillator();
+  osc.type  = 'sine';
+  osc.frequency.value = freq;
+  osc.frequency.setTargetAtTime(freq * 0.92, now, 0.6);  // gentle pitch droop
+  const gTone = ac.createGain();
+  gTone.gain.setValueAtTime(0.04 + prox * 0.06, now);    // much quieter
+  gTone.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+  osc.connect(gTone);
+  gTone.connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 1.8);
+  struckOsc = osc;
+
+  // ── 2. Short noise burst — the "pluck" attack transient ──
+  const bufLen = ac.sampleRate * 0.12;
+  const buf    = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const data   = buf.getChannelData(0);
+  for(let i=0;i<bufLen;i++) data[i] = (Math.random()*2-1);
+
+  const noise  = ac.createBufferSource();
+  noise.buffer = buf;
+
+  // Band-pass the noise around the string frequency so it feels tuned
+  const nbp = ac.createBiquadFilter();
+  nbp.type  = 'bandpass';
+  nbp.frequency.value = freq * 1.5;
+  nbp.Q.value = 1.8;
+
+  const gNoise = ac.createGain();
+  gNoise.gain.setValueAtTime(0.06 + prox * 0.05, now);
+  gNoise.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+  noise.connect(nbp);
+  nbp.connect(gNoise);
+  gNoise.connect(masterGain);
+  noise.start(now);
+  noise.stop(now + 0.12);
+
+  // ── 3. Subtle filter nudge ──
+  if(filterNode){
+    filterNode.frequency.setTargetAtTime(freq * 1.5, now, 0.04);
+    filterNode.Q.setTargetAtTime(3, now, 0.04);
+    filterNode.frequency.setTargetAtTime(200, now + 0.4, 0.35);
+    filterNode.Q.setTargetAtTime(1.2, now + 0.4, 0.35);
+  }
+}
+
+function releaseString(){
+  struckAxis = -1;
+}
+
+[c,ov].forEach(el=>{
+  el.addEventListener('dblclick',()=>randomize());
+  el.addEventListener('mousedown',e=>{
+    onDragStart(e.clientX);
+    pluckString(e.clientX, e.clientY);
+  });
+  el.addEventListener('mouseup',()=>{ releaseString(); });
+  el.addEventListener('touchstart',e=>{ e.preventDefault(); onDragStart(e.touches[0].clientX); pluckString(e.touches[0].clientX,e.touches[0].clientY); },{passive:false});
+  el.addEventListener('touchend',e=>{
+    onDragEnd(); releaseString();
+    const n=Date.now();if(n-last<300)randomize();last=n;
+  });
+});
+window.addEventListener('mousemove',e=>{
+  if(dragX!==null) onDragMove(e.clientX);
+  // Hover: detect nearest axis and softly excite it
+  if(!isDragging) hoverString(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup',onDragEnd);
+window.addEventListener('touchmove',e=>{ if(dragX!==null){ e.preventDefault(); onDragMove(e.touches[0].clientX); } },{passive:false});
+
+
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+
+function startAudio(){
+  if(audioStarted) return;
+  audioStarted = true;
+
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume();
+
+  masterGain = ctx.createGain();
+  const master = masterGain;
+  master.gain.value = 0.0;
+  master.gain.linearRampToValueAtTime(0.7, ctx.currentTime + 4);
+
+  // Filter — cutoff modulated by rotation angle
+  filterNode = ctx.createBiquadFilter();
+  filterNode.type = 'bandpass';
+  filterNode.frequency.value = 200;
+  filterNode.Q.value = 1.2;
+  filterNode.connect(master);
+  master.connect(ctx.destination);
+
+  // Delay reverb
+  const delay = ctx.createDelay(2.0);
+  delay.delayTime.value = 0.38;
+  const delGain = ctx.createGain();
+  delGain.gain.value = 0.3;
+  delay.connect(delGain);
+  delGain.connect(delay);
+  delGain.connect(master);
+
+  const bases = [
+    55.0,
+    55.0 * PHI,
+    55.0 / PHI,
+    55.0 * PHI * PHI,
+    55.0 / (PHI * PHI),
+    55.0 * Math.sqrt(5),
+  ];
+
+  bases.forEach((bf, fi) => {
+    [-2,-1,0,1,2].forEach((n, ni) => {
+      const freq = bf * Math.pow(PHI, n);
+      if(freq < 25 || freq > 900) return;
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+
+      const g = ctx.createGain();
+      g.gain.value = (n === 0 ? 0.04 : 0.02) / bases.length;
+
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.03 + fi * 0.007 * PHI + ni * 0.003;
+      const lg = ctx.createGain();
+      lg.gain.value = g.gain.value * 0.2;
+      lfo.connect(lg);
+      lg.connect(g.gain);
+      lfo.start();
+
+      osc.connect(g);
+      g.connect(filterNode);
+      g.connect(delay);
+      osc.start();
+    });
+  });
+
+  document.getElementById('audiobtn').textContent = '♪ on';
+  document.getElementById('audiobtn').style.opacity = '0.3';
+}
+
+// Called every frame with current rotation angle
+function updateFilter(angle, vel, dragging){
+  if(!filterNode || !filterNode.context) return;
+  const now = filterNode.context.currentTime;
+
+  if(dragging && Math.abs(vel) > 0.5){
+    // Drag: map velocity directly to dramatic filter sweep
+    // Fast drag right → high bright cutoff; fast drag left → low dark cutoff
+    const speed = Math.max(-1, Math.min(1, vel / 30)); // -1..1
+    const norm = (speed + 1) / 2; // 0..1
+    const minF = 60, maxF = 3200;
+    const cutoff = minF * Math.pow(maxF/minF, norm);
+    filterNode.frequency.setTargetAtTime(cutoff, now, 0.03); // fast response
+    // High Q when dragging fast — resonant, wah-like
+    filterNode.Q.setTargetAtTime(1.0 + 8.0 * Math.abs(speed), now, 0.03);
+    // Also open up master gain slightly on drag
+    if(masterGain) masterGain.gain.setTargetAtTime(0.85, now, 0.05);
+  } else {
+    // Idle: gentle slow sweep from rotation angle
+    const norm = (Math.sin(angle) + 1) / 2;
+    const minF = 80, maxF = 900;
+    const cutoff = minF * Math.pow(maxF/minF, norm);
+    filterNode.frequency.setTargetAtTime(cutoff, now, 0.4); // slow glide back
+    filterNode.Q.setTargetAtTime(1.0 + 1.5 * Math.abs(Math.cos(angle)), now, 0.4);
+    if(masterGain) masterGain.gain.setTargetAtTime(0.7, now, 0.3);
+  }
+}
+
+document.getElementById('audiobtn').addEventListener('click', startAudio);
+</script>
+</body>
+</html>

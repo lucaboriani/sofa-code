@@ -4,6 +4,7 @@ export interface FakeGain {
     value: number;
     ramps: FakeRamp[];
     linearRampToValueAtTime(v: number, t: number): void;
+    exponentialRampToValueAtTime(v: number, t: number): void;
     setValueAtTime(v: number, t: number): void;
     setTargetAtTime(v: number, t: number, tc: number): void;
     cancelScheduledValues(t: number): void;
@@ -17,6 +18,7 @@ function makeAudioParam(initial = 0): {
   setValueAtTime(v: number, t: number): void;
   setTargetAtTime(v: number, t: number, tc: number): void;
   cancelScheduledValues(t: number): void;
+  linearRampToValueAtTime(v: number, t: number): void;
   exponentialRampToValueAtTime(v: number, t: number): void;
 } {
   let val = initial;
@@ -26,6 +28,7 @@ function makeAudioParam(initial = 0): {
     setValueAtTime(v: number) { val = v; },
     setTargetAtTime(v: number) { val = v; },
     cancelScheduledValues() {},
+    linearRampToValueAtTime(v: number) { val = v; },
     exponentialRampToValueAtTime(v: number) { val = v; }
   };
 }
@@ -58,6 +61,7 @@ export interface FakeAudioContext {
     getChannelData(ch: number): Float32Array;
   };
   createConvolver(): { buffer: unknown; connect(d: unknown): void; disconnect(): void };
+  createDelay(maxDelay?: number): { delayTime: ReturnType<typeof makeAudioParam>; connect(d: unknown): void; disconnect(): void };
   createConstantSource(): { offset: ReturnType<typeof makeAudioParam>; connect(d: unknown): void; start(): void };
   createAnalyser(): FakeAnalyser;
   createMediaStreamSource(stream: unknown): FakeMediaStreamSource;
@@ -114,6 +118,7 @@ export function makeFakeAudio(): FakeAudioContext {
           value: 1,
           ramps,
           linearRampToValueAtTime(v, t) { ramps.push({ value: v, endTime: t }); g.gain.value = v; },
+          exponentialRampToValueAtTime(v, _t) { g.gain.value = v; },
           setValueAtTime(v, _t) { g.gain.value = v; },
           setTargetAtTime(v, _t, _tc) { g.gain.value = v; },
           cancelScheduledValues() {}
@@ -151,6 +156,9 @@ export function makeFakeAudio(): FakeAudioContext {
     },
     createConvolver() {
       return { buffer: null as unknown, connect() {}, disconnect() {} };
+    },
+    createDelay(_maxDelay?: number) {
+      return { delayTime: makeAudioParam(0), connect() {}, disconnect() {} };
     },
     createConstantSource() {
       return { offset: makeAudioParam(0), connect() {}, start() {} };
