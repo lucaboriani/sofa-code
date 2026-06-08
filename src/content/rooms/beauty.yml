@@ -1,0 +1,9 @@
+slug: beauty
+title: Line of Beauty — Hogarth
+subtitle: WebGL · 2D · Audio
+description: Hogarth's serpentine S-curve, drawn in 1753, morphs forever through independent sinusoids and trails of itself. Drag to rotate it and sweep the filter; the construction grid behind it is a six-string harp tuned to golden-ratio intervals — brush or pluck the axes to sound them.
+tags: [WebGL, Geometry, Audio]
+year: 2026
+accent: red
+hasAudio: true
+order: 7

@@ -13,7 +13,7 @@ test('clicking a card navigates into the room with no console errors', async ({ 
 });
 
 test('audio prompt appears on every audio-enabled room', async ({ page }) => {
-  for (const slug of ['tunnel', 'swarm', 'neural', 'ikebana', 'bindu'] as const) {
+  for (const slug of ['tunnel', 'swarm', 'neural', 'ikebana', 'bindu', 'catfish', 'beauty'] as const) {
     await page.goto(`/rooms/${slug}`);
     await expect(page.locator(`[data-audio-prompt="${slug}"]`)).toBeVisible();
   }
@@ -26,7 +26,7 @@ test('back-to-gallery from a room does not throw', async ({ page }) => {
   await page.goto('/rooms/swarm');
   await page.locator('.room-back').click();
   await page.waitForURL(/\/$/);
-  await expect(page.locator('[data-room-card]')).toHaveCount(5);
+  await expect(page.locator('[data-room-card]')).toHaveCount(8);
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const roomSchema = z.object({
-  slug: z.enum(['neural', 'tunnel', 'swarm', 'ikebana', 'bindu']),
+  slug: z.enum(['neural', 'tunnel', 'swarm', 'ikebana', 'bindu', 'catfish', 'beauty', 'tree']),
   title: z.string(),
   subtitle: z.string().optional(),
   description: z.string(),
