@@ -4,7 +4,9 @@
 export function makeOverlay(onRestart: () => void): { root: HTMLElement; hint: HTMLElement } {
   const root = document.createElement('div');
   root.setAttribute('data-tree-overlay', '');
-  root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2;';
+  // z-index 6 sits above the room page chrome (z-index 5) so the restart
+  // button is clickable and not hidden behind the title bar.
+  root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:6;';
 
   const hint = document.createElement('div');
   hint.textContent = 'Disegna la direzione del tronco';
@@ -16,7 +18,7 @@ export function makeOverlay(onRestart: () => void): { root: HTMLElement; hint: H
   const restart = document.createElement('button');
   restart.innerHTML = '&#8635; Pulisci';
   restart.style.cssText =
-    'position:absolute;top:28px;right:32px;background:none;pointer-events:auto;' +
+    'position:absolute;bottom:24px;left:24px;background:none;pointer-events:auto;' +
     'border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.35);' +
     'font-size:10px;letter-spacing:.25em;text-transform:uppercase;' +
     "padding:8px 18px;cursor:pointer;transition:all .3s;font-family:Georgia,serif;";
