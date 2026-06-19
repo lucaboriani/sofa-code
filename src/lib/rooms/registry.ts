@@ -3,7 +3,7 @@ import type { RoomAudio } from '@/lib/audio/bus';
 
 export type RoomSlug =
   | 'neural' | 'tunnel' | 'swarm' | 'ikebana' | 'bindu'
-  | 'catfish' | 'beauty' | 'tree';
+  | 'catfish' | 'beauty' | 'tree' | 'sri-yantra';
 
 export interface RoomModule {
   mount: RoomMount;
@@ -18,5 +18,6 @@ export const rooms: Record<RoomSlug, () => Promise<RoomModule>> = {
   bindu:   () => import('./bindu'),
   catfish: () => import('./catfish'),
   beauty:  () => import('./beauty'),
-  tree:    () => import('./tree')
+  tree:    () => import('./tree'),
+  'sri-yantra': () => import('./sri-yantra')
 };

@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sri Yantra</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; font-family:serif; }
+  canvas { display:block; }
+  #ui {
+    position:fixed; bottom:26px; left:50%; transform:translateX(-50%);
+    display:flex; gap:14px; z-index:10;
+  }
+  button {
+    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.2);
+    color:rgba(255,255,255,0.85); padding:9px 24px; border-radius:30px;
+    cursor:pointer; font-size:12px; letter-spacing:0.1em;
+    backdrop-filter:blur(8px); transition:background 0.2s;
+  }
+  button:hover { background:rgba(255,255,255,0.16); }
+  #phase-label {
+    position:fixed; top:20px; left:50%; transform:translateX(-50%);
+    color:rgba(255,255,255,0.3); font-size:11px; letter-spacing:0.26em;
+    text-transform:uppercase; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<div id="phase-label">ॐ</div>
+<canvas id="c"></canvas>
+<div id="ui">
+  <button id="btnSound">Enable Sound</button>
+  <button id="btnRegen">Regenerate</button>
+</div>
+<script>
+const rand   = (a,b) => a+Math.random()*(b-a);
+const randInt= (a,b) => Math.floor(rand(a,b+1));
+const lerp   = (a,b,t) => a+(b-a)*t;
+const clamp  = (v,a,b) => Math.max(a,Math.min(b,v));
+const easeOut= t => 1-(1-clamp(t,0,1))*(1-clamp(t,0,1));
+
+// ── Canvas 2D ─────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+function resize(){
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize); resize();
+
+// ── Colour helpers ────────────────────────────────────────────────────────────
+function hsl(h,s,l,a=1){
+  return `hsla(${((h%360)+360)%360},${s}%,${l}%,${a})`;
+}
+const palettes = {
+  golden: { bg:'#0a0501', pri:(a)=>hsl(50,100,82,a), sec:(a)=>hsl(30,100,70,a), acc:(a)=>hsl(15,100,72,a), glow:(a)=>hsl(55,100,90,a) },
+  indigo: { bg:'#05060f', pri:(a)=>hsl(195,100,82,a), sec:(a)=>hsl(265,95,80,a), acc:(a)=>hsl(175,100,82,a), glow:(a)=>hsl(215,100,90,a) },
+  crimson:{ bg:'#0d0103', pri:(a)=>hsl(345,100,78,a), sec:(a)=>hsl(18,100,72,a), acc:(a)=>hsl(335,100,86,a), glow:(a)=>hsl(5,100,82,a) },
+  emerald:{ bg:'#010d05', pri:(a)=>hsl(145,100,72,a), sec:(a)=>hsl(115,90,68,a), acc:(a)=>hsl(55,100,78,a),  glow:(a)=>hsl(135,100,82,a) },
+  dusk:   { bg:'#08030f', pri:(a)=>hsl(300,90,82,a), sec:(a)=>hsl(265,95,78,a), acc:(a)=>hsl(45,100,82,a),  glow:(a)=>hsl(290,100,90,a) },
+  ivory:  { bg:'#100d06', pri:(a)=>hsl(38,60,96,a),  sec:(a)=>hsl(32,40,88,a),  acc:(a)=>hsl(0,0,100,a),    glow:(a)=>hsl(42,100,96,a) },
+};
+let palette;
+function genPalette(){
+  const keys=Object.keys(palettes);
+  palette = palettes[keys[randInt(0,keys.length-1)]];
+}
+
+// ── Geometry ──────────────────────────────────────────────────────────────────
+function buildYantra(R,v){
+  const up=(r,yo=0)=>[[0,r+yo],[-r*0.866,-r*0.5+yo],[r*0.866,-r*0.5+yo]];
+  const dn=(r,yo=0)=>up(r,yo).map(([x,y])=>[x,-y+yo*2]);
+  return [
+    {r:R*0.97, yo:0,           up:false},
+    {r:R*0.82, yo:R*0.03*v,    up:true },
+    {r:R*0.78, yo:-R*0.04*v,   up:false},
+    {r:R*0.66, yo:R*0.04*v,    up:true },
+    {r:R*0.62, yo:-R*0.04*v,   up:false},
+    {r:R*0.52, yo:R*0.03*v,    up:true },
+    {r:R*0.48, yo:-R*0.03*v,   up:false},
+    {r:R*0.37, yo:R*0.03*v,    up:true },
+    {r:R*0.33, yo:-R*0.02*v,   up:false},
+  ].map(({r,yo,up:u})=>({ pts:u?up(r,yo):dn(r,yo), up:u, radius:r }));
+}
+
+function petalRing(R,n,inner,outer){
+  const all=[]; const steps=60;
+  for(let i=0;i<n;i++){
+    const a0=(i/n)*Math.PI*2-Math.PI/2, a1=((i+1)/n)*Math.PI*2-Math.PI/2;
+    const seg=[];
+    for(let s=0;s<=steps;s++){
+      const tt=s/steps, a=lerp(a0,a1,tt), rr=lerp(inner,outer,Math.sin(tt*Math.PI));
+      seg.push([Math.cos(a)*rr, Math.sin(a)*rr]);
+    }
+    for(let s=steps;s>=0;s--){
+      const tt=s/steps, a=lerp(a0,a1,tt);
+      seg.push([Math.cos(a)*inner, Math.sin(a)*inner]);
+    }
+    all.push(seg);
+  }
+  return all;
+}
+
+function bhupuraParts(R){
+  const S=R*1.12, S2=R*1.04, gw=S*0.14;
+  const sq=s=>[[-s,-s],[s,-s],[s,s],[-s,s],[-s,-s]];
+  const gates=[];
+  for(const [ax,sg] of [['x',1],['x',-1],['y',1],['y',-1]]){
+    if(ax==='x'){
+      const y=sg*S2;
+      gates.push([[-S,y],[-gw/2,y]]); gates.push([[gw/2,y],[S,y]]);
+      gates.push([[-gw/2,y],[-gw/2,y+sg*gw*0.55],[gw/2,y+sg*gw*0.55],[gw/2,y]]);
+    } else {
+      const x=sg*S2;
+      gates.push([[x,-S],[x,-gw/2]]); gates.push([[x,gw/2],[x,S]]);
+      gates.push([[x,-gw/2],[x+sg*gw*0.55,-gw/2],[x+sg*gw*0.55,gw/2],[x,gw/2]]);
+    }
+  }
+  return { outer:sq(S), inner:sq(S2), gates };
+}
+
+// ── Canvas 2D draw helpers ────────────────────────────────────────────────────
+// All coords in "yantra space" (centred, ±R units), converted to screen by cx/cy/scale
+
+let cx, cy, scale; // set in generateScene and resize
+
+function toScreen([x,y]){ return [cx+x*scale, cy-y*scale]; }
+
+function strokePoly(pts, color, lineWidth=1.5){
+  if(pts.length<2) return;
+  ctx.beginPath();
+  const [sx,sy]=toScreen(pts[0]);
+  ctx.moveTo(sx,sy);
+  for(let i=1;i<pts.length;i++){
+    const [px,py]=toScreen(pts[i]);
+    ctx.lineTo(px,py);
+  }
+  ctx.strokeStyle=color;
+  ctx.lineWidth=lineWidth;
+  ctx.stroke();
+}
+
+function fillPoly(pts, color){
+  if(pts.length<2) return;
+  ctx.beginPath();
+  const [sx,sy]=toScreen(pts[0]);
+  ctx.moveTo(sx,sy);
+  for(let i=1;i<pts.length;i++){
+    const [px,py]=toScreen(pts[i]);
+    ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.fillStyle=color;
+  ctx.fill();
+}
+
+function strokeCircle(r, color, lineWidth=1.5){
+  ctx.beginPath();
+  ctx.arc(cx, cy, r*scale, 0, Math.PI*2);
+  ctx.strokeStyle=color;
+  ctx.lineWidth=lineWidth;
+  ctx.stroke();
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────────────
+const APPEAR_DUR=1.0, STEP=1.2;
+const NAMES=['Bindu','Triangle 1','Triangle 2','Triangle 3','Triangle 4','Triangle 5',
+             'Triangle 6','Triangle 7','Triangle 8','Triangle 9',
+             '8-Petal Lotus','16-Petal Lotus','Circles','Bhupura'];
+const N_LAYERS=14;
+function startOf(i){ return i*STEP; }
+function prog(i,age){ return clamp((age-startOf(i))/APPEAR_DUR,0,1); }
+
+// ── Per-layer rotation ────────────────────────────────────────────────────────
+const layerRot     = new Float64Array(N_LAYERS);
+const layerTarget  = new Float64Array(N_LAYERS);
+const layerIntroOff= new Float64Array(N_LAYERS);
+const layerUnwound = new Uint8Array(N_LAYERS);
+const layerRadii   = new Float64Array(N_LAYERS);
+const nextNudge    = new Float64Array(N_LAYERS);
+const pendingDeltas= Array.from({length:N_LAYERS},()=>[]);
+const CHASE_SPEED  = 6;
+let autoActivity   = 0;
+
+function resetNudges(){ for(let i=0;i<N_LAYERS;i++) nextNudge[i]=0; }
+
+function scheduleNudges(now){
+  for(let i=0;i<N_LAYERS;i++){
+    if(!layerUnwound[i]) continue;
+    if(nextNudge[i]===0) nextNudge[i]=now+rand(0,3);
+    if(now>=nextNudge[i]){
+      const dir=Math.random()<0.5?1:-1;
+      layerTarget[i]+=dir*(Math.PI*0.15+rand(0,Math.PI*0.35));
+      nextNudge[i]=now+rand(3,9);
+      autoActivity=Math.min(autoActivity+0.35,1.0);
+    }
+  }
+}
+
+function flushPending(now){
+  for(let i=0;i<N_LAYERS;i++){
+    const keep=[];
+    for(const ev of pendingDeltas[i]){
+      if(now-ev.t >= ev.dist*0.18) layerTarget[i]+=ev.delta;
+      else keep.push(ev);
+    }
+    pendingDeltas[i]=keep;
+  }
+}
+
+// ── Drag ─────────────────────────────────────────────────────────────────────
+let dragging=false, dragPrevAngle=0, touchedLayerIdx=-1, dragVelocity=0, lastDragTime=0;
+let lastInteraction=0;
+const IDLE_AFTER=2.0;
+
+function pointerAngle(cx2,cy2,px,py){ return Math.atan2(-(py-cy2),(px-cx2)); }
+function pointerDist(px,py){ return Math.sqrt((px-cx)**2+(py-cy)**2)/scale; }
+
+function closestLayer(px,py){
+  const r=pointerDist(px,py);
+  let best=0, bestD=Infinity;
+  for(let i=0;i<N_LAYERS;i++){
+    const d=Math.abs(r-layerRadii[i]);
+    if(d<bestD){ bestD=d; best=i; }
+  }
+  return best;
+}
+
+function startDrag(px,py){
+  dragging=true;
+  dragPrevAngle=pointerAngle(cx,cy,px,py);
+  touchedLayerIdx=closestLayer(px,py);
+  lastInteraction=performance.now()/1000;
+  resetNudges();
+}
+
+function moveDrag(px,py){
+  if(!dragging) return;
+  const now=performance.now()/1000;
+  const angle=pointerAngle(cx,cy,px,py);
+  let delta=angle-dragPrevAngle;
+  if(delta> Math.PI) delta-=Math.PI*2;
+  if(delta<-Math.PI) delta+=Math.PI*2;
+  dragPrevAngle=angle;
+  const dt=Math.max(now-lastDragTime,0.001);
+  dragVelocity=delta/dt; lastDragTime=now;
+  layerTarget[touchedLayerIdx]+=delta;
+  for(let i=0;i<N_LAYERS;i++){
+    if(i===touchedLayerIdx) continue;
+    pendingDeltas[i].push({delta, t:now, dist:Math.abs(i-touchedLayerIdx)});
+  }
+  if(audioOn&&filterNode){
+    const spd=Math.min(Math.abs(dragVelocity),10)/10;
+    filterNode.frequency.setTargetAtTime(320+spd*1200,audioCtx.currentTime,0.1);
+    if(droneOsc) droneOsc.frequency.setTargetAtTime((baseFreq||136.1)+spd*40,audioCtx.currentTime,0.08);
+  }
+}
+
+function endDrag(){
+  dragging=false; dragVelocity=0;
+  lastInteraction=performance.now()/1000;
+  if(audioOn&&filterNode) filterNode.frequency.setTargetAtTime(320,audioCtx.currentTime,1.5);
+  if(audioOn&&droneOsc)   droneOsc.frequency.setTargetAtTime(baseFreq||136.1,audioCtx.currentTime,2);
+}
+
+canvas.addEventListener('mousedown', e=>startDrag(e.clientX,e.clientY));
+canvas.addEventListener('mousemove', e=>{ if(dragging) moveDrag(e.clientX,e.clientY); });
+canvas.addEventListener('mouseup',   ()=>endDrag());
+canvas.addEventListener('touchstart',e=>{ e.preventDefault(); startDrag(e.touches[0].clientX,e.touches[0].clientY); },{passive:false});
+canvas.addEventListener('touchmove', e=>{ e.preventDefault(); moveDrag(e.touches[0].clientX,e.touches[0].clientY); },{passive:false});
+canvas.addEventListener('touchend',  ()=>endDrag());
+
+// ── Scene state ───────────────────────────────────────────────────────────────
+let yantra, params, birthTime=0;
+const lbl=document.getElementById('phase-label');
+let lastLabel='';
+
+function generateScene(){
+  genPalette();
+  birthTime=performance.now()/1000;
+  const minDim=Math.min(canvas.width,canvas.height);
+  const R=minDim*0.40;  // pixels
+  const v=rand(0.75,1.25);
+  cx=canvas.width/2; cy=canvas.height/2; scale=1; // scale=1 because R already in px
+
+  params={ R, v, rotSpeed:rand(-0.0012,0.0012)*Math.PI*2, pulse:rand(0.006,0.015) };
+  yantra=buildYantra(1,v); // build in unit space, multiply by R in draw
+
+  layerRadii[0]=0;
+  for(let i=0;i<9;i++) layerRadii[i+1]=yantra[i].radius;
+  layerRadii[10]=0.80; layerRadii[11]=0.94;
+  layerRadii[12]=1.06; layerRadii[13]=1.08;
+
+  for(let i=0;i<N_LAYERS;i++){
+    const dir=Math.random()<0.5?1:-1;
+    const off=dir*(Math.PI*0.6+rand(0,Math.PI*0.3));
+    layerIntroOff[i]=off; layerRot[i]=off; layerTarget[i]=off;
+    layerUnwound[i]=0; pendingDeltas[i]=[];
+  }
+  resetNudges(); autoActivity=0;
+  lastInteraction=performance.now()/1000+20;
+  lastLabel=''; lbl.textContent='ॐ';
+  if(audioOn&&droneOsc) updateDrone();
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+let audioCtx,audioOn=false,droneOsc=null,droneOsc2=null,droneOsc3=null,shimmerOsc=null;
+let droneGain=null,filterNode=null,breathLfo=null,breathGain=null,wobbleOsc=null,wobbleDepth=null;
+let baseFreq=136.1;
+
+function makeImpulse(ctx,dur=2.5,decay=3.2){
+  const sr=ctx.sampleRate,len=Math.floor(sr*dur);
+  const buf=ctx.createBuffer(2,len,sr);
+  for(let ch=0;ch<2;ch++){
+    const d=buf.getChannelData(ch);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);
+  }
+  return buf;
+}
+
+function startAudio(){
+  audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  droneGain=audioCtx.createGain();
+  droneGain.gain.setValueAtTime(0,audioCtx.currentTime);
+  droneGain.gain.linearRampToValueAtTime(0.11,audioCtx.currentTime+10);
+  droneGain.connect(audioCtx.destination);
+  const revNode=audioCtx.createConvolver();
+  revNode.buffer=makeImpulse(audioCtx);
+  const revGain=audioCtx.createGain(); revGain.gain.value=0.28;
+  revNode.connect(revGain); revGain.connect(audioCtx.destination);
+  filterNode=audioCtx.createBiquadFilter();
+  filterNode.type='lowpass'; filterNode.frequency.value=320; filterNode.Q.value=0.5;
+  filterNode.connect(droneGain); filterNode.connect(revNode);
+  const f=136.1; baseFreq=f;
+  for(const [n,gv] of [[1,0.55],[2,0.18],[3,0.09],[5,0.04]]){
+    const o=audioCtx.createOscillator(); o.type='sine'; o.frequency.value=f*n;
+    const g=audioCtx.createGain(); g.gain.value=gv;
+    o.connect(g); g.connect(filterNode); o.start();
+    if(n===1) droneOsc=o; if(n===2) droneOsc2=o; if(n===3) droneOsc3=o;
+  }
+  shimmerOsc=audioCtx.createOscillator(); shimmerOsc.type='sine'; shimmerOsc.frequency.value=f*9;
+  const shimGain=audioCtx.createGain(); shimGain.gain.value=0;
+  shimmerOsc.connect(shimGain); shimGain.connect(revNode); shimmerOsc.start();
+  const shimLfo=audioCtx.createOscillator(); shimLfo.type='sine'; shimLfo.frequency.value=1/23;
+  const shimDepth=audioCtx.createGain(); shimDepth.gain.value=0.018;
+  shimLfo.connect(shimDepth); shimDepth.connect(shimGain.gain); shimLfo.start();
+  breathLfo=audioCtx.createOscillator(); breathLfo.type='sine'; breathLfo.frequency.value=0.07;
+  breathGain=audioCtx.createGain(); breathGain.gain.value=0.022;
+  breathLfo.connect(breathGain); breathGain.connect(droneGain.gain); breathLfo.start();
+  wobbleOsc=audioCtx.createOscillator(); wobbleOsc.type='sine'; wobbleOsc.frequency.value=0.031;
+  wobbleDepth=audioCtx.createGain(); wobbleDepth.gain.value=0.28;
+  wobbleOsc.connect(wobbleDepth); wobbleDepth.connect(droneOsc.frequency); wobbleDepth.connect(droneOsc2.frequency);
+  wobbleOsc.start();
+  audioOn=true;
+}
+
+function updateDrone(){
+  if(!audioOn||!droneOsc) return;
+  const freqs={golden:136.1,indigo:141,crimson:128,emerald:144,dusk:138.5,ivory:130.8};
+  const keys=Object.keys(palettes);
+  const scheme=keys.find(k=>palettes[k]===palette)||'golden';
+  const f=freqs[scheme]||136.1; baseFreq=f;
+  droneOsc.frequency.setTargetAtTime(f,audioCtx.currentTime,4);
+  droneOsc2.frequency.setTargetAtTime(f*2,audioCtx.currentTime,4);
+  droneOsc3.frequency.setTargetAtTime(f*3,audioCtx.currentTime,4);
+  if(shimmerOsc) shimmerOsc.frequency.setTargetAtTime(f*9,audioCtx.currentTime,4);
+  const fc={golden:360,indigo:420,crimson:300,emerald:440,dusk:380,ivory:260};
+  if(filterNode) filterNode.frequency.setTargetAtTime(fc[scheme]||320,audioCtx.currentTime,4);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render(ts){
+  requestAnimationFrame(render);
+  const t=ts/1000, age=t-birthTime, now=t;
+  const {R,rotSpeed,pulse}=params;
+
+  // Update cx/cy in case of resize
+  cx=canvas.width/2; cy=canvas.height/2;
+  const minDim=Math.min(canvas.width,canvas.height);
+  // R is in normalised [0,1] space, scale to pixels
+  const S=minDim*0.40; // pixel scale
+
+  // Flush pending
+  flushPending(now);
+
+  // Idle auto-rotate
+  const allCreated=Array.from(layerUnwound).every(v=>v===1);
+  const idle=!dragging&&allCreated&&(now-lastInteraction)>IDLE_AFTER;
+  if(idle) scheduleNudges(now);
+
+  // Decay activity, drive audio
+  autoActivity*=0.993;
+  if(audioOn&&filterNode&&!dragging){
+    filterNode.frequency.setTargetAtTime(320+autoActivity*500,audioCtx.currentTime,1.2);
+  }
+  if(audioOn&&droneOsc&&!dragging){
+    droneOsc.frequency.setTargetAtTime((baseFreq||136.1)+autoActivity*18,audioCtx.currentTime,1.5);
+  }
+
+  // Chase targets + drift
+  const dt=0.016;
+  for(let i=0;i<N_LAYERS;i++){
+    if(!layerUnwound[i]&&prog(i,age)>0){ layerTarget[i]=0; layerUnwound[i]=1; }
+    if(layerUnwound[i]) layerTarget[i]+=rotSpeed*dt;
+    layerRot[i]=lerp(layerRot[i],layerTarget[i],1-Math.exp(-CHASE_SPEED*dt));
+  }
+
+  // Phase label
+  const curIdx=NAMES.findLastIndex((_,i)=>age>=startOf(i));
+  const curName=curIdx>=0?NAMES[curIdx]:'ॐ';
+  if(curName!==lastLabel){ lbl.textContent=curName; lastLabel=curName; }
+
+  // Clear
+  ctx.fillStyle=palette.bg;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const breath=0.82+0.18*Math.sin(t*pulse*Math.PI*2);
+  const LW=1.5; // line width px
+
+  // Helper: transform a point in yantra-unit space with a given layer rotation
+  function tp(i,[x,y]){
+    const r=layerRot[i];
+    const rx=x*Math.cos(r)-y*Math.sin(r);
+    const ry=x*Math.sin(r)+y*Math.cos(r);
+    return [cx+rx*S, cy-ry*S];
+  }
+  function tpA(i,pts){ return pts.map(p=>tp(i,p)); }
+
+  ctx.save();
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+
+  // ── Triangle fills ──
+  for(let i=0;i<9;i++){
+    const p=easeOut(prog(i+1,age)); if(p<=0) continue;
+    const tri=yantra[i];
+    const tpts=tpA(i+1,tri.pts);
+    ctx.beginPath();
+    ctx.moveTo(tpts[0][0],tpts[0][1]);
+    ctx.lineTo(tpts[1][0],tpts[1][1]);
+    ctx.lineTo(tpts[2][0],tpts[2][1]);
+    ctx.closePath();
+    ctx.fillStyle=tri.up ? palette.pri(p*0.18*breath) : palette.sec(p*0.18*breath);
+    ctx.fill();
+  }
+
+  // ── Triangle outlines ──
+  for(let i=0;i<9;i++){
+    const p=easeOut(prog(i+1,age)); if(p<=0) continue;
+    const tri=yantra[i];
+    const tpts=tpA(i+1,tri.pts);
+    ctx.beginPath();
+    ctx.moveTo(tpts[0][0],tpts[0][1]);
+    ctx.lineTo(tpts[1][0],tpts[1][1]);
+    ctx.lineTo(tpts[2][0],tpts[2][1]);
+    ctx.closePath();
+    ctx.strokeStyle=tri.up ? palette.pri(p*breath) : palette.sec(p*breath);
+    ctx.lineWidth=LW;
+    ctx.stroke();
+  }
+
+  // ── 8-petal lotus ──
+  const p10=easeOut(prog(10,age));
+  if(p10>0){
+    ctx.strokeStyle=palette.acc(p10*0.9*breath);
+    ctx.lineWidth=LW;
+    for(const seg of petalRing(1,8,0.72,0.89)){
+      const spts=tpA(10,seg);
+      ctx.beginPath(); ctx.moveTo(spts[0][0],spts[0][1]);
+      for(let k=1;k<spts.length;k++) ctx.lineTo(spts[k][0],spts[k][1]);
+      ctx.stroke();
+    }
+  }
+
+  // ── 16-petal lotus ──
+  const p11=easeOut(prog(11,age));
+  if(p11>0){
+    ctx.strokeStyle=palette.sec(p11*0.8*breath);
+    ctx.lineWidth=LW;
+    for(const seg of petalRing(1,16,0.89,1.00)){
+      const spts=tpA(11,seg);
+      ctx.beginPath(); ctx.moveTo(spts[0][0],spts[0][1]);
+      for(let k=1;k<spts.length;k++) ctx.lineTo(spts[k][0],spts[k][1]);
+      ctx.stroke();
+    }
+  }
+
+  // ── 3 circles — using arc() for perfect smoothness ──
+  const p12=easeOut(prog(12,age));
+  if(p12>0){
+    // Circles are rotationally symmetric so layerRot doesn't change them visually
+    for(const [rf,al] of [[1.02,0.9],[1.06,0.7],[1.11,0.5]]){
+      ctx.beginPath();
+      ctx.arc(cx,cy,rf*S,0,Math.PI*2);
+      ctx.strokeStyle=palette.pri(p12*al*breath);
+      ctx.lineWidth=LW;
+      ctx.stroke();
+    }
+  }
+
+  // ── Bhupura ──
+  const p13=easeOut(prog(13,age));
+  if(p13>0){
+    const {outer,inner,gates}=bhupuraParts(1);
+    const drawPoly=(pts,col,lw)=>{
+      const spts=tpA(13,pts);
+      ctx.beginPath(); ctx.moveTo(spts[0][0],spts[0][1]);
+      for(let k=1;k<spts.length;k++) ctx.lineTo(spts[k][0],spts[k][1]);
+      ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.stroke();
+    };
+    drawPoly(outer, palette.acc(p13*breath), LW);
+    drawPoly(inner, palette.pri(p13*0.8*breath), LW);
+    for(const g of gates) drawPoly(g, palette.acc(p13*0.9*breath), LW);
+  }
+
+  // ── Bindu ──
+  const p0=easeOut(prog(0,age));
+  if(p0>0){
+    const gr=0.065*(0.75+0.25*Math.sin(t*1.6));
+    const grd=ctx.createRadialGradient(cx,cy,0,cx,cy,gr*S);
+    grd.addColorStop(0, palette.glow(p0*breath*0.9));
+    grd.addColorStop(1, palette.glow(0));
+    ctx.beginPath(); ctx.arc(cx,cy,gr*S,0,Math.PI*2);
+    ctx.fillStyle=grd; ctx.fill();
+    const br=0.024*(0.9+0.1*Math.sin(t*4.0));
+    ctx.beginPath(); ctx.arc(cx,cy,br*S,0,Math.PI*2);
+    ctx.fillStyle=palette.acc(p0); ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+generateScene();
+requestAnimationFrame(render);
+
+document.getElementById('btnRegen').onclick=()=>generateScene();
+document.getElementById('btnSound').onclick=()=>{
+  const btn=document.getElementById('btnSound');
+  if(!audioOn){ startAudio(); updateDrone(); btn.textContent='Sound On  ◉'; }
+  else{
+    droneGain.gain.setTargetAtTime(0,audioCtx.currentTime,1.2);
+    setTimeout(()=>{ audioCtx.suspend(); audioOn=false; btn.textContent='Enable Sound'; },1500);
+  }
+};
+</script>
+</body>
+</html>
