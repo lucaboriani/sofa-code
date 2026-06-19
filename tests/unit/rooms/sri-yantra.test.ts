@@ -21,7 +21,7 @@ describe('sri-yantra geometry', () => {
   it('petalRing returns one segment per petal', () => {
     expect(petalRing(8, 0.72, 0.89)).toHaveLength(8);
     expect(petalRing(16, 0.89, 1.0)).toHaveLength(16);
-    expect(petalRing(8, 0.72, 0.89)[0].length).toBeGreaterThan(2);
+    expect(petalRing(8, 0.72, 0.89)[0].length).toBe(122);
   });
 
   it('bhupuraParts returns the enclosure plus twelve gate polylines', () => {

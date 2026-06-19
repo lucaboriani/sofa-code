@@ -4,7 +4,7 @@
 export type Pt = [number, number];
 
 export const rand = (a: number, b: number): number => a + Math.random() * (b - a);
-export const randInt = (a: number, b: number): number => Math.floor(rand(a, b + 1));
+export const randInt = (a: number, b: number): number => Math.floor(rand(a, b + 1)); // inclusive of both a and b
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 export const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 export const easeOut = (t: number): number => 1 - (1 - clamp(t, 0, 1)) * (1 - clamp(t, 0, 1));

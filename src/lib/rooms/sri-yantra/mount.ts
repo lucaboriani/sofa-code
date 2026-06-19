@@ -34,7 +34,6 @@ export const mount: RoomMount = (canvas, opts) => {
   // ── Per-layer rotation state (preallocated; verbatim) ──────────────────────
   const layerRot = new Float64Array(N_LAYERS);
   const layerTarget = new Float64Array(N_LAYERS);
-  const layerIntroOff = new Float64Array(N_LAYERS);
   const layerUnwound = new Uint8Array(N_LAYERS);
   const layerRadii = new Float64Array(N_LAYERS);
   const nextNudge = new Float64Array(N_LAYERS);
@@ -81,7 +80,7 @@ export const mount: RoomMount = (canvas, opts) => {
     for (let i = 0; i < N_LAYERS; i++) {
       const dir = Math.random() < 0.5 ? 1 : -1;
       const off = dir * (Math.PI * 0.6 + rand(0, Math.PI * 0.3));
-      layerIntroOff[i] = off; layerRot[i] = off; layerTarget[i] = off;
+      layerRot[i] = off; layerTarget[i] = off;
       layerUnwound[i] = 0; pendingDeltas[i] = [];
     }
     resetNudges();
@@ -116,6 +115,7 @@ export const mount: RoomMount = (canvas, opts) => {
   function flushPending(now: number): void {
     for (let i = 0; i < N_LAYERS; i++) {
       const list = pendingDeltas[i];
+      if (list.length === 0) continue;
       const keep: PendingDelta[] = [];
       for (const ev of list) {
         if (now - ev.t >= ev.dist * 0.18) layerTarget[i] += ev.delta;
