@@ -281,16 +281,19 @@ export const mount: RoomMount = (canvas, opts) => {
     if (c <= 1) touchCounts.delete(id); else touchCounts.set(id, c - 1);
   }
 
+  const neighborScratch = new Int32Array(structureCount); // reused by findNeighbor — no per-call allocation
+
   function findNeighbor(originPos: readonly [number, number, number], excludeId: number): number | null {
-    const maxDist = 150, candidates: number[] = [];
+    const maxDist = 150;
+    let count = 0;
     for (let i = 0; i < structureCount; i++) {
       if (i === excludeId) continue;
       const p = structures[i].position;
       const d = Math.hypot(originPos[0] - p[0], originPos[1] - p[1], originPos[2] - p[2]);
-      if (d < maxDist && d > 5) candidates.push(i);
+      if (d < maxDist && d > 5) neighborScratch[count++] = i;
     }
-    if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    if (count === 0) return null;
+    return neighborScratch[Math.floor(Math.random() * count)];
   }
 
   function resetFilament(f: Filament): void {
@@ -508,53 +511,56 @@ export const mount: RoomMount = (canvas, opts) => {
     drawGlow(coreGlow, GOLD);
 
     // ── Filaments (additive blend, indexed LINES) ─────────────────────────────
-    if (lockedIds.length === 0) {
-      filAlpha.fill(0);
-    } else {
-      for (const f of filaments) {
-        f.life += dt;
-        if (f.life > f.duration) resetFilament(f);
-        const originPos = targetPos(f.originId);
-        const baseRadius = targetBaseRadius(f.originId);
-        const camDist = Math.hypot(camX - originPos[0], camY - originPos[1], camZ - originPos[2]);
-        const effRadius = baseRadius + camDist * 0.09;
-        const prog = f.life / f.duration;
-        const grow = Math.min(prog * 2.2, 1);
-        const fade = prog < 0.55 ? prog / 0.55 : Math.max(0, 1 - (prog - 0.55) / 0.45);
-        const startOffset = f.linked ? baseRadius * 0.35 : effRadius * 0.5;
-        const reachTotal = f.linked ? f.reach : effRadius * 2.4;
-        const filBase = filaments.indexOf(f) * (FIL_SEGS + 1);
-        for (let s = 0; s <= FIL_SEGS; s++) {
-          const frac = (s / FIL_SEGS) * grow;
-          const dist = startOffset + (reachTotal - startOffset) * frac;
-          const wob = (1 - frac) * (f.linked ? baseRadius * 0.15 : effRadius * 0.3);
-          const w1 = Math.sin(t * 5 + f.seed + s * 1.7) * wob;
-          const w2 = Math.cos(t * 4.2 + f.seed * 1.3 + s * 1.1) * wob;
-          const vi = (filBase + s) * 3;
-          filPos[vi] = originPos[0] + f.dirX * dist + f.perp1X * w1 + f.perp2X * w2;
-          filPos[vi + 1] = originPos[1] + f.dirY * dist + f.perp1Y * w1 + f.perp2Y * w2;
-          filPos[vi + 2] = originPos[2] + f.dirZ * dist + f.perp1Z * w1 + f.perp2Z * w2;
-          filColor[vi] = f.colorR; filColor[vi + 1] = f.colorG; filColor[vi + 2] = f.colorB;
-          const peak = f.bridge ? 1.0 : (f.linked ? 0.9 : 0.65);
-          filAlpha[filBase + s] = fade * peak;
+    if (opts.quality === 'full') {
+      if (lockedIds.length === 0) {
+        filAlpha.fill(0);
+        sharedState.bridgeActive = false;
+      } else {
+        for (const f of filaments) {
+          f.life += dt;
+          if (f.life > f.duration) resetFilament(f);
+          const originPos = targetPos(f.originId);
+          const baseRadius = targetBaseRadius(f.originId);
+          const camDist = Math.hypot(camX - originPos[0], camY - originPos[1], camZ - originPos[2]);
+          const effRadius = baseRadius + camDist * 0.09;
+          const prog = f.life / f.duration;
+          const grow = Math.min(prog * 2.2, 1);
+          const fade = prog < 0.55 ? prog / 0.55 : Math.max(0, 1 - (prog - 0.55) / 0.45);
+          const startOffset = f.linked ? baseRadius * 0.35 : effRadius * 0.5;
+          const reachTotal = f.linked ? f.reach : effRadius * 2.4;
+          const filBase = filaments.indexOf(f) * (FIL_SEGS + 1);
+          for (let s = 0; s <= FIL_SEGS; s++) {
+            const frac = (s / FIL_SEGS) * grow;
+            const dist = startOffset + (reachTotal - startOffset) * frac;
+            const wob = (1 - frac) * (f.linked ? baseRadius * 0.15 : effRadius * 0.3);
+            const w1 = Math.sin(t * 5 + f.seed + s * 1.7) * wob;
+            const w2 = Math.cos(t * 4.2 + f.seed * 1.3 + s * 1.1) * wob;
+            const vi = (filBase + s) * 3;
+            filPos[vi] = originPos[0] + f.dirX * dist + f.perp1X * w1 + f.perp2X * w2;
+            filPos[vi + 1] = originPos[1] + f.dirY * dist + f.perp1Y * w1 + f.perp2Y * w2;
+            filPos[vi + 2] = originPos[2] + f.dirZ * dist + f.perp1Z * w1 + f.perp2Z * w2;
+            filColor[vi] = f.colorR; filColor[vi + 1] = f.colorG; filColor[vi + 2] = f.colorB;
+            const peak = f.bridge ? 1.0 : (f.linked ? 0.9 : 0.65);
+            filAlpha[filBase + s] = fade * peak;
+          }
         }
+        sharedState.bridgeActive = filaments.some(f => f.bridge && f.life / f.duration < 0.9);
       }
-      sharedState.bridgeActive = filaments.some(f => f.bridge && f.life / f.duration < 0.9);
+      gl.bindBuffer(gl.ARRAY_BUFFER, filPosB);
+      gl.bufferData(gl.ARRAY_BUFFER, filPos, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, filColorB);
+      gl.bufferData(gl.ARRAY_BUFFER, filColor, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, filAlphaB);
+      gl.bufferData(gl.ARRAY_BUFFER, filAlpha, gl.DYNAMIC_DRAW);
+      gl.useProgram(progLine);
+      gl.uniformMatrix4fv(uLine.uMVP, false, mvp);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      setAttr(gl, progLine, 'aPos', filPosB, 3);
+      setAttr(gl, progLine, 'aColor', filColorB, 3);
+      setAttr(gl, progLine, 'aAlpha', filAlphaB, 1);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, filIdxB);
+      gl.drawElements(gl.LINES, filIdx.length, gl.UNSIGNED_SHORT, 0);
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, filPosB);
-    gl.bufferData(gl.ARRAY_BUFFER, filPos, gl.DYNAMIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, filColorB);
-    gl.bufferData(gl.ARRAY_BUFFER, filColor, gl.DYNAMIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, filAlphaB);
-    gl.bufferData(gl.ARRAY_BUFFER, filAlpha, gl.DYNAMIC_DRAW);
-    gl.useProgram(progLine);
-    gl.uniformMatrix4fv(uLine.uMVP, false, mvp);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-    setAttr(gl, progLine, 'aPos', filPosB, 3);
-    setAttr(gl, progLine, 'aColor', filColorB, 3);
-    setAttr(gl, progLine, 'aAlpha', filAlphaB, 1);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, filIdxB);
-    gl.drawElements(gl.LINES, filIdx.length, gl.UNSIGNED_SHORT, 0);
   }, ac.signal);
 
   if (!opts.startPaused) loop.start();
