@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>CYBERSPACE // matrix render</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * {
+    box-sizing: border-box;
+    -webkit-user-select: none; -moz-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000308; overflow: hidden;
+    font-family: 'JetBrains Mono', monospace;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; inset: 0; pointer-events: none;
+    color: #4a9298; z-index: 10;
+    text-shadow: 0 0 3px rgba(74,146,152,0.5);
+  }
+  .corner {
+    position: absolute; font-size: 10px; letter-spacing: 0.12em;
+    line-height: 1.6; opacity: 0.75;
+  }
+  .tl { top: 16px; left: 16px; }
+  .tr { top: 16px; right: 16px; text-align: right; }
+  .bl { bottom: 16px; left: 16px; }
+  .br { bottom: 16px; right: 16px; text-align: right; }
+  .label { color: #2a5e63; }
+  .val { color: #6fb0b5; }
+
+  .bracket {
+    position: absolute; width: 22px; height: 22px;
+    border: 1px solid rgba(93,247,255,0.5);
+  }
+  .bracket.nw { top: 44px; left: 44px; border-right: none; border-bottom: none; }
+  .bracket.ne { top: 44px; right: 44px; border-left: none; border-bottom: none; }
+  .bracket.sw { bottom: 44px; left: 44px; border-right: none; border-top: none; }
+  .bracket.se { bottom: 44px; right: 44px; border-left: none; border-top: none; }
+
+  #crosshair {
+    position: absolute; top: 50%; left: 50%;
+    width: 18px; height: 18px; margin: -9px 0 0 -9px;
+    pointer-events: none;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ''; position: absolute; background: rgba(111,176,181,0.55);
+  }
+  #crosshair::before { top: 50%; left: 0; right: 0; height: 1px; margin-top: -0.5px; }
+  #crosshair::after { left: 50%; top: 0; bottom: 0; width: 1px; margin-left: -0.5px; }
+
+  #title {
+    position: fixed; top: 40%; left: 0; right: 0;
+    text-align: center; z-index: 20;
+    transition: all 1.8s cubic-bezier(.2,.8,.2,1);
+  }
+  #title h1 {
+    margin: 0; font-size: clamp(28px, 7vw, 64px); font-weight: 700;
+    color: #7fbcc0; letter-spacing: 0.35em; text-indent: 0.35em;
+    text-shadow: 0 0 10px rgba(74,146,152,0.6);
+  }
+  #title p {
+    margin: 14px 0 0; font-size: 11px; letter-spacing: 0.3em;
+    color: #4d9aa0; text-transform: uppercase;
+  }
+  #title.shrink {
+    top: 18px; left: 18px; right: auto; text-align: left;
+    transform: scale(0.32); transform-origin: top left;
+    opacity: 0.8;
+  }
+  #title.shrink p { display: none; }
+
+  #hint {
+    position: fixed; bottom: 46px; left: 0; right: 0;
+    text-align: center; font-size: 10px; letter-spacing: 0.18em;
+    color: #4d9aa0; z-index: 15;
+    transition: opacity 1.5s ease;
+  }
+  #hint.gone { opacity: 0; }
+
+  #audioBtn {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, 60px);
+    z-index: 25; font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: #d6fbff; background: rgba(0, 14, 18, 0.55);
+    border: 1px solid rgba(93, 247, 255, 0.55);
+    padding: 10px 22px; cursor: pointer;
+    text-shadow: 0 0 6px rgba(93,247,255,0.6);
+    transition: opacity 0.6s ease, transform 0.3s ease;
+  }
+  #audioBtn:active { transform: translate(-50%, 60px) scale(0.96); }
+  #audioBtn.on {
+    color: #7fbcc0; border-color: rgba(74,146,152,0.4);
+    text-shadow: none; cursor: default;
+  }
+  #audioBtn.fade { opacity: 0; pointer-events: none; }
+
+  .dfloat {
+    position: fixed; top: 0; left: 0; z-index: 12;
+    font-size: 9px; letter-spacing: 0.06em; white-space: nowrap;
+    color: #d8fbff; text-shadow: 0 0 4px rgba(216,251,255,0.6);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.4s ease;
+    background: rgba(0,10,14,0.35);
+    padding: 2px 5px; border: 1px solid rgba(216,251,255,0.15);
+  }
+  .dfloat.show { opacity: 0.85; }
+</style>
+</head>
+<body>
+
+<div id="title">
+  <h1>CYBERSPACE</h1>
+  <p>consensual hallucination · unauthorized render</p>
+</div>
+<button id="audioBtn" type="button">Enable Audio</button>
+<div id="hint">tap to start audio &nbsp;·&nbsp; move to steer &nbsp;·&nbsp; hold to accelerate</div>
+
+<div id="hud">
+  <div class="corner tl">
+    <div><span class="label">JACK POINT</span> <span class="val" id="hud-node">CASE_09</span></div>
+    <div><span class="label">DEPTH</span> <span class="val" id="hud-depth">0000</span> m</div>
+    <div><span class="label">STATUS</span> <span class="val" id="hud-status">nominal</span></div>
+  </div>
+  <div class="corner tr">
+    <div><span class="label">THROUGHPUT</span> <span class="val" id="hud-tp">--</span> Tb/s</div>
+    <div><span class="label">ICE STATUS</span> <span class="val" id="hud-ice">passive</span></div>
+  </div>
+  <div class="corner bl">
+    <div><span class="label">VECTOR</span> <span class="val" id="hud-vec">0.00 / 0.00</span></div>
+    <div><span class="label">AUDIO</span> <span class="val" id="hud-audio">standby</span></div>
+  </div>
+  <div class="corner br">
+    <div><span class="label">NEAREST ARRAY</span> <span class="val" id="hud-near">scanning</span></div>
+  </div>
+  <div class="bracket nw"></div>
+  <div class="bracket ne"></div>
+  <div class="bracket sw"></div>
+  <div class="bracket se"></div>
+  <div id="crosshair"></div>
+</div>
+
+<canvas id="c"></canvas>
+<div id="dataFloaters"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  window.addEventListener('error', function (e) {
+    var msg = e && e.message ? e.message : 'Unknown script error';
+    var loc = (e && e.filename) ? (' @ ' + e.filename.split('/').pop() + ':' + e.lineno) : '';
+    var box = document.getElementById('errBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'errBox';
+      box.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999;' +
+        'background:rgba(40,0,10,0.9);color:#ffb3c6;font-family:monospace;' +
+        'font-size:11px;padding:10px 14px;max-height:35vh;overflow:auto;white-space:pre-wrap;';
+      document.body.appendChild(box);
+    }
+    box.textContent += 'ERROR: ' + msg + loc + '\n';
+  });
+
+  window.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  window.addEventListener('selectstart', function (e) { e.preventDefault(); });
+
+  var canvas = document.getElementById('c');
+  var testCanvas = document.createElement('canvas');
+  var glTest = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+  if (!glTest) {
+    document.body.innerHTML =
+      '<div style="color:#7fbcc0;font-family:\'JetBrains Mono\',monospace;' +
+      'padding:60px 24px;text-align:center;font-size:13px;line-height:1.7;">' +
+      'WebGL isn\'t available in this preview environment.<br>' +
+      'Try opening this file directly in a desktop browser tab.</div>';
+    return;
+  }
+
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
+  } catch (err) {
+    document.body.innerHTML =
+      '<div style="color:#7fbcc0;font-family:\'JetBrains Mono\',monospace;' +
+      'padding:60px 24px;text-align:center;font-size:13px;line-height:1.7;">' +
+      'Renderer failed to start: ' + (err && err.message ? err.message : 'unknown error') + '</div>';
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000308);
+  scene.fog = new THREE.FogExp2(0x000308, 0.0075);
+
+  var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 3000);
+  camera.position.set(0, 0, 0);
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- palette ----------
+  var CYAN = 0x0088a3;
+  var ICE = 0xa3183f;
+  var GOLD = 0xa3822e;
+  var TUNNEL_LEN = 4200;
+  var HALF_W = 55, HALF_H = 32;
+
+  // ---------- glow sprite texture ----------
+  function glowTexture(hex) {
+    var size = 128;
+    var c = document.createElement('canvas');
+    c.width = c.height = size;
+    var ctx = c.getContext('2d');
+    var col = new THREE.Color(hex);
+    var r = Math.round(col.r * 255), g = Math.round(col.g * 255), b = Math.round(col.b * 255);
+    var grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+    grad.addColorStop(0, 'rgba(' + r + ',' + g + ',' + b + ',0.22)');
+    grad.addColorStop(0.4, 'rgba(' + r + ',' + g + ',' + b + ',0.06)');
+    grad.addColorStop(1, 'rgba(' + r + ',' + g + ',' + b + ',0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    return new THREE.CanvasTexture(c);
+  }
+  var cyanGlowTex = glowTexture(CYAN);
+  var iceGlowTex = glowTexture(ICE);
+  var goldGlowTex = glowTexture(GOLD);
+
+  function addGlow(parent, tex, scale) {
+    var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    var sprite = new THREE.Sprite(mat);
+    sprite.scale.set(scale, scale, 1);
+    parent.add(sprite);
+    return sprite;
+  }
+
+  // ---------- tunnel grid ----------
+  (function buildGrid() {
+    var pts = [];
+    var step = 6;
+    for (var x = -HALF_W; x <= HALF_W; x += step) {
+      pts.push(x, -HALF_H, 0, x, -HALF_H, -TUNNEL_LEN);
+      pts.push(x, HALF_H, 0, x, HALF_H, -TUNNEL_LEN);
+    }
+    for (var z = 0; z >= -TUNNEL_LEN; z -= 22) {
+      pts.push(-HALF_W, -HALF_H, z, HALF_W, -HALF_H, z);
+      pts.push(-HALF_W, HALF_H, z, HALF_W, HALF_H, z);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    var mat = new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: 0.22 });
+    scene.add(new THREE.LineSegments(geo, mat));
+  })();
+
+  // ---------- particle motes ----------
+  (function buildParticles() {
+    var count = 2600;
+    var pos = new Float32Array(count * 3);
+    for (var i = 0; i < count; i++) {
+      pos[i*3]   = (Math.random() * 2 - 1) * HALF_W;
+      pos[i*3+1] = (Math.random() * 2 - 1) * HALF_H;
+      pos[i*3+2] = -Math.random() * TUNNEL_LEN;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    var mat = new THREE.PointsMaterial({ color: 0x3d6e73, size: 0.5, transparent: true, opacity: 0.28 });
+    scene.add(new THREE.Points(geo, mat));
+  })();
+
+  // ---------- data structures (corporate arrays) ----------
+  var structures = [];
+  var geoms = [
+    new THREE.IcosahedronGeometry(1, 0),
+    new THREE.OctahedronGeometry(1, 0),
+    new THREE.BoxGeometry(1.4, 1.4, 1.4),
+    new THREE.TetrahedronGeometry(1, 0)
+  ];
+  var ARRAY_NAMES = ['SENSE/NET', 'MAAS-NEO', 'HOSAKA', 'ZAIBATSU-7', 'ORBITAL/T-A', 'FISSION/RIM', 'BANK-AX', 'PANTHER/MDN'];
+
+  (function buildStructures() {
+    var n = 240;
+    for (var i = 0; i < n; i++) {
+      var isIce = Math.random() < 0.18;
+      var geo = geoms[Math.floor(Math.random() * geoms.length)];
+      var color = isIce ? ICE : CYAN;
+      var mat = new THREE.MeshBasicMaterial({ color: color, wireframe: true, transparent: true, opacity: 0.4 });
+      var mesh = new THREE.Mesh(geo, mat);
+      var scale = 2 + Math.random() * 8;
+      mesh.scale.setScalar(scale);
+      mesh.position.set(
+        (Math.random() * 2 - 1) * (HALF_W - 6),
+        (Math.random() * 2 - 1) * (HALF_H - 4),
+        -100 - Math.random() * (TUNNEL_LEN - 260)
+      );
+      mesh.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
+      mesh.userData.spin = (Math.random() * 0.6 - 0.3);
+      mesh.userData.isIce = isIce;
+      mesh.userData.baseScale = scale;
+      mesh.userData.name = ARRAY_NAMES[Math.floor(Math.random() * ARRAY_NAMES.length)];
+      addGlow(mesh, isIce ? iceGlowTex : cyanGlowTex, scale * 1.6);
+      scene.add(mesh);
+      structures.push(mesh);
+    }
+  })();
+
+  // ---------- the core ----------
+  var core = new THREE.Group();
+  var coreOuter = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ color: GOLD, wireframe: true, transparent: true, opacity: 0.5 })
+  );
+  var coreInner = new THREE.Mesh(
+    new THREE.OctahedronGeometry(1, 0),
+    new THREE.MeshBasicMaterial({ color: 0x8a6a2a, wireframe: true, transparent: true, opacity: 0.4 })
+  );
+  coreOuter.scale.setScalar(58);
+  coreInner.scale.setScalar(30);
+  core.add(coreOuter, coreInner);
+  core.position.set(0, 0, -TUNNEL_LEN + 140);
+  addGlow(core, goldGlowTex, 100);
+  scene.add(core);
+
+  // ---------- generative drone audio ----------
+  var audioCtx = null, audioStarted = false;
+  var noiseGain = null, noiseFilter = null, distGain = null, resonanceGain = null;
+  var hudAudio = document.getElementById('hud-audio');
+
+  function initAudio() {
+    if (audioStarted) return;
+    audioStarted = true;
+    try {
+      buildAudioGraph();
+    } catch (err) {
+      audioStarted = false;
+      if (hudAudio) hudAudio.textContent = 'error';
+      throw err;
+    }
+  }
+
+  function buildAudioGraph() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(function () {});
+    }
+
+    var master = audioCtx.createGain();
+    master.gain.value = 0;
+    master.connect(audioCtx.destination);
+    master.gain.setTargetAtTime(0.22, audioCtx.currentTime, 1.2);
+
+    // slow stereo-ish delay for space
+    var delay = audioCtx.createDelay(2.0);
+    delay.delayTime.value = 0.85;
+    var feedback = audioCtx.createGain();
+    feedback.gain.value = 0.35;
+    var delayFilter = audioCtx.createBiquadFilter();
+    delayFilter.type = 'lowpass';
+    delayFilter.frequency.value = 1400;
+    delay.connect(delayFilter).connect(feedback).connect(delay);
+    delay.connect(master);
+
+    // low detuned drone pair
+    var freqs = [55, 55.6, 110.2];
+    freqs.forEach(function (f, i) {
+      var osc = audioCtx.createOscillator();
+      osc.type = i === 2 ? 'triangle' : 'sawtooth';
+      osc.frequency.value = f;
+      var g = audioCtx.createGain();
+      g.gain.value = i === 2 ? 0.05 : 0.09;
+      var filt = audioCtx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = 420;
+      osc.connect(filt).connect(g).connect(master);
+      g.connect(delay);
+      osc.start();
+
+      // slow LFO drifting the filter cutoff for an "evolving" quality
+      var lfo = audioCtx.createOscillator();
+      lfo.frequency.value = 0.03 + i * 0.011;
+      var lfoGain = audioCtx.createGain();
+      lfoGain.gain.value = 180 + i * 40;
+      lfo.connect(lfoGain).connect(filt.frequency);
+      lfo.start();
+    });
+
+    // filtered noise bed — the "static / signal" texture
+    var bufferSize = audioCtx.sampleRate * 2;
+    var noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    var data = noiseBuffer.getChannelData(0);
+    for (var i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
+    var noise = audioCtx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    noise.loop = true;
+    var noiseFilterLocal = audioCtx.createBiquadFilter();
+    noiseFilterLocal.type = 'bandpass';
+    noiseFilterLocal.frequency.value = 900;
+    noiseFilterLocal.Q.value = 0.7;
+    noiseFilter = noiseFilterLocal;
+    var noiseGainLocal = audioCtx.createGain();
+    noiseGainLocal.gain.value = 0.025;
+    noiseGain = noiseGainLocal;
+    noise.connect(noiseFilter).connect(noiseGain).connect(master);
+    noise.start();
+
+    // gritty interference layer — silent until an object is locked
+    function distortionCurve(amount) {
+      var n = 44100, curve = new Float32Array(n);
+      for (var i = 0; i < n; i++) {
+        var x = (i * 2) / n - 1;
+        curve[i] = ((3 + amount) * x * 20 * Math.PI / 180) / (Math.PI + amount * Math.abs(x));
+      }
+      return curve;
+    }
+    var distortion = audioCtx.createWaveShaper();
+    distortion.curve = distortionCurve(55);
+    distortion.oversample = '4x';
+    var distHP = audioCtx.createBiquadFilter();
+    distHP.type = 'highpass';
+    distHP.frequency.value = 700;
+    distGain = audioCtx.createGain();
+    distGain.gain.value = 0;
+    noise.connect(distortion).connect(distHP).connect(distGain).connect(master);
+    distGain.connect(delay);
+
+    // dual-lock resonance — a slow beat that only emerges when two objects are bridged
+    resonanceGain = audioCtx.createGain();
+    resonanceGain.gain.value = 0;
+    var resFilter = audioCtx.createBiquadFilter();
+    resFilter.type = 'bandpass';
+    resFilter.frequency.value = 440;
+    resFilter.Q.value = 5;
+    var r1 = audioCtx.createOscillator();
+    r1.type = 'sine'; r1.frequency.value = 440;
+    var r2 = audioCtx.createOscillator();
+    r2.type = 'sine'; r2.frequency.value = 445.5;
+    r1.connect(resFilter);
+    r2.connect(resFilter);
+    resFilter.connect(resonanceGain).connect(master);
+    resonanceGain.connect(delay);
+    r1.start(); r2.start();
+
+    var noiseLfo = audioCtx.createOscillator();
+    noiseLfo.frequency.value = 0.05;
+    var noiseLfoGain = audioCtx.createGain();
+    noiseLfoGain.gain.value = 500;
+    noiseLfo.connect(noiseLfoGain).connect(noiseFilter.frequency);
+    noiseLfo.start();
+
+    // sparse high evolving pings — data-signal accents
+    function schedulePing() {
+      if (!audioCtx) return;
+      var t0 = audioCtx.currentTime;
+
+      var osc = audioCtx.createOscillator();
+      osc.type = Math.random() < 0.6 ? 'sine' : 'triangle';
+      var base = 320 + Math.random() * 700;
+      var sweepStyle = Math.random();
+      var dur = 1.6 + Math.random() * 2.2;
+
+      osc.frequency.setValueAtTime(base, t0);
+      if (sweepStyle < 0.4) {
+        // gentle downward drift
+        osc.frequency.exponentialRampToValueAtTime(base * (0.75 + Math.random() * 0.15), t0 + dur * 0.8);
+      } else if (sweepStyle < 0.7) {
+        // gentle upward drift
+        osc.frequency.exponentialRampToValueAtTime(base * (1.15 + Math.random() * 0.2), t0 + dur * 0.8);
+      } // else: holds steady, just a soft tone
+
+      // slow vibrato so it reads as a signal, not a chirp
+      var vibrato = audioCtx.createOscillator();
+      vibrato.frequency.value = 1.2 + Math.random() * 1.5;
+      var vibratoGain = audioCtx.createGain();
+      vibratoGain.gain.value = 2 + Math.random() * 3;
+      vibrato.connect(vibratoGain).connect(osc.frequency);
+      vibrato.start(t0);
+      vibrato.stop(t0 + dur + 0.5);
+
+      // softening filter to round off the transient
+      var softener = audioCtx.createBiquadFilter();
+      softener.type = 'lowpass';
+      softener.frequency.value = 900 + Math.random() * 600;
+      softener.Q.value = 0.4;
+
+      var g = audioCtx.createGain();
+      var peak = 0.025 + Math.random() * 0.03;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + 0.35 + Math.random() * 0.25);
+      g.gain.setTargetAtTime(0, t0 + dur * 0.5, dur * 0.4);
+
+      osc.connect(softener).connect(g).connect(delay);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.6);
+
+      setTimeout(schedulePing, 4200 + Math.random() * 7000);
+    }
+    setTimeout(schedulePing, 3000);
+
+    hudAudio.textContent = 'streaming';
+  }
+
+  window.addEventListener('pointerdown', initAudio, { passive: true });
+  window.addEventListener('touchstart', initAudio, { passive: true });
+
+  var audioBtn = document.getElementById('audioBtn');
+  audioBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    initAudio();
+    audioBtn.textContent = 'Audio On';
+    audioBtn.classList.add('on');
+    audioBtn.disabled = true;
+    setTimeout(function () { audioBtn.classList.add('fade'); }, 900);
+  });
+  audioBtn.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+
+  function setInterference(level) {
+    initAudio();
+    if (!audioCtx || !noiseGain || !noiseFilter || !distGain || !resonanceGain) return;
+    var now = audioCtx.currentTime;
+    var tc = 0.4; // smooth, no clicks — gradual settle rather than a jump
+    if (level >= 2) {
+      noiseGain.gain.setTargetAtTime(0.24, now, tc);
+      noiseFilter.frequency.setTargetAtTime(4200, now, tc);
+      noiseFilter.Q.setTargetAtTime(4, now, tc);
+      distGain.gain.setTargetAtTime(0.16, now, tc);
+      resonanceGain.gain.setTargetAtTime(0.055, now, tc);
+    } else if (level === 1) {
+      noiseGain.gain.setTargetAtTime(0.16, now, tc);
+      noiseFilter.frequency.setTargetAtTime(3200, now, tc);
+      noiseFilter.Q.setTargetAtTime(3, now, tc);
+      distGain.gain.setTargetAtTime(0.1, now, tc);
+      resonanceGain.gain.setTargetAtTime(0, now, tc);
+    } else {
+      noiseGain.gain.setTargetAtTime(0.025, now, tc);
+      noiseFilter.frequency.setTargetAtTime(900, now, tc);
+      noiseFilter.Q.setTargetAtTime(0.7, now, tc);
+      distGain.gain.setTargetAtTime(0, now, tc);
+      resonanceGain.gain.setTargetAtTime(0, now, tc);
+    }
+  }
+
+
+  var pointer = { x: 0, y: 0, active: false };
+  var yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
+  var speed = 11, targetSpeed = 11;
+  var BASE_SPEED = 11, BOOST_SPEED = 30;
+
+  // ---------- tap-to-lock: raycasting for object selection (multi-touch aware) ----------
+  var raycaster = new THREE.Raycaster();
+  var ndc = new THREE.Vector2();
+  var pointerLocks = {}; // pointerId -> locked object (mesh or core group)
+  var hudStatus = document.getElementById('hud-status');
+
+  function lockedObjs() {
+    var out = [];
+    for (var id in pointerLocks) {
+      if (out.indexOf(pointerLocks[id]) === -1) out.push(pointerLocks[id]);
+    }
+    return out;
+  }
+
+  function pickTargets() {
+    return structures.concat([coreOuter, coreInner]);
+  }
+
+  function highlight(target) {
+    if (target.userData.__lit) return;
+    target.userData.__lit = true;
+    target.userData.origOpacity = target.material.opacity;
+    target.userData.origColor = target.material.color.getHex();
+    target.material.opacity = 1;
+    target.material.color.setHex(0xffffff);
+  }
+
+  function unhighlight(target) {
+    if (!target || !target.userData.__lit) return;
+    target.userData.__lit = false;
+    target.material.opacity = target.userData.origOpacity;
+    target.material.color.setHex(target.userData.origColor);
+  }
+
+  function nameFor(target) {
+    return target === core ? 'CORE ARRAY' : target.userData.name;
+  }
+
+  function updateHudStatus() {
+    var objs = lockedObjs();
+    if (!objs.length) { hudStatus.textContent = 'nominal'; return; }
+    hudStatus.textContent = 'LOCKED · ' + objs.map(nameFor).join(' ⇄ ');
+  }
+
+  function refreshFloatersForLocks() {
+    var objs = lockedObjs();
+    if (objs[0]) showFloaters(nameFor(objs[0]), objs[0] === core, 0); else hideFloaters(0);
+    if (objs[1]) showFloaters(nameFor(objs[1]), objs[1] === core, 1); else hideFloaters(1);
+  }
+
+  function tryLockAt(clientX, clientY, pointerId) {
+    ndc.x = (clientX / window.innerWidth) * 2 - 1;
+    ndc.y = -(clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickTargets(), false);
+    if (!hits.length) return false;
+
+    var obj = hits[0].object;
+    var isCore = (obj === coreOuter || obj === coreInner);
+    var target = isCore ? core : obj;
+
+    if (isCore) { highlight(coreOuter); highlight(coreInner); }
+    else { highlight(obj); }
+
+    pointerLocks[pointerId] = target;
+    targetSpeed = 0;
+    speed = 0;
+    updateHudStatus();
+    refreshFloatersForLocks();
+    kickFilaments();
+    setInterference(lockedObjs().length);
+    return true;
+  }
+
+  function releaseLockForPointer(pointerId) {
+    var target = pointerLocks[pointerId];
+    if (target === undefined) return;
+    delete pointerLocks[pointerId];
+    var stillHeld = lockedObjs().indexOf(target) !== -1;
+    if (!stillHeld) {
+      if (target === core) { unhighlight(coreOuter); unhighlight(coreInner); }
+      else unhighlight(target);
+    }
+    var objs = lockedObjs();
+    targetSpeed = objs.length ? 0 : BASE_SPEED;
+    updateHudStatus();
+    refreshFloatersForLocks();
+    if (objs.length) kickFilaments(); else stopFilaments();
+    setInterference(objs.length);
+  }
+
+  // ---------- light filaments emanating from a locked object ----------
+  var filamentGroup = new THREE.Group();
+  scene.add(filamentGroup);
+  var filamentPool = [];
+  var FILAMENT_COUNT = 16;
+  var FIL_SEGS = 5;
+
+  for (var xi = 0; xi < FILAMENT_COUNT; xi++) {
+    var fGeo = new THREE.BufferGeometry();
+    var fPos = new Float32Array((FIL_SEGS + 1) * 3);
+    fGeo.setAttribute('position', new THREE.BufferAttribute(fPos, 3));
+    var fMat = new THREE.LineBasicMaterial({
+      color: 0xbfffff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, fog: false
+    });
+    var fLine = new THREE.Line(fGeo, fMat);
+    fLine.frustumCulled = false;
+    filamentGroup.add(fLine);
+    filamentPool.push({
+      line: fLine, dir: new THREE.Vector3(), perp1: new THREE.Vector3(), perp2: new THREE.Vector3(),
+      life: 0, duration: 0.6, seed: Math.random() * 100, linked: false, bridge: false, reach: 0,
+      originIndex: 0, targetObj: null, wasConnected: false
+    });
+  }
+
+  var currentFilColor = 0xffffff;
+  var touchCounts = new Map(); // object -> number of filaments currently connected to it
+
+  function touchObject(obj) {
+    if (lockedObjs().indexOf(obj) !== -1) return; // already highlighted via a direct lock
+    var count = touchCounts.get(obj) || 0;
+    if (count === 0) highlight(obj);
+    touchCounts.set(obj, count + 1);
+  }
+
+  function untouchObject(obj) {
+    if (!touchCounts.has(obj)) return;
+    var count = touchCounts.get(obj) - 1;
+    if (count <= 0) {
+      touchCounts.delete(obj);
+      if (lockedObjs().indexOf(obj) === -1) unhighlight(obj);
+    } else {
+      touchCounts.set(obj, count);
+    }
+  }
+
+  function colorForObj(obj) {
+    if (obj === core) return 0xffe9a8;
+    return obj.userData.isIce ? 0xff86ab : 0x9ff5ff;
+  }
+
+  function findNeighbor(originPos, excludeObj) {
+    var maxDist = 150, candidates = [];
+    for (var i = 0; i < structures.length; i++) {
+      var s = structures[i];
+      if (s === excludeObj) continue;
+      var d = originPos.distanceTo(s.position);
+      if (d < maxDist && d > 5) candidates.push(s);
+    }
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  function resetFilament(f) {
+    if (f.wasConnected && f.targetObj) { untouchObject(f.targetObj); f.wasConnected = false; }
+
+    var objs = lockedObjs();
+    if (!objs.length) { f.linked = false; f.bridge = false; f.targetObj = null; return; }
+
+    var originIdx = Math.floor(Math.random() * objs.length);
+    var originObj = objs[originIdx];
+    var originWp = new THREE.Vector3();
+    originObj.getWorldPosition(originWp);
+    f.originIndex = originIdx;
+
+    var bridgeTarget = null;
+    if (objs.length >= 2 && Math.random() < 0.65) {
+      var others = objs.filter(function (o) { return o !== originObj; });
+      bridgeTarget = others[Math.floor(Math.random() * others.length)];
+    }
+
+    var neighbor = null;
+    if (!bridgeTarget) {
+      neighbor = Math.random() < 0.35 ? findNeighbor(originWp, originObj) : null;
+    }
+
+    f.bridge = !!bridgeTarget;
+    f.linked = !!bridgeTarget || !!neighbor;
+    f.targetObj = bridgeTarget || neighbor || null;
+
+    if (bridgeTarget) {
+      var bridgeWp = new THREE.Vector3();
+      bridgeTarget.getWorldPosition(bridgeWp);
+      var toBridge = new THREE.Vector3().subVectors(bridgeWp, originWp);
+      f.reach = toBridge.length();
+      f.dir.copy(toBridge.normalize());
+      f.duration = 1.1 + Math.random() * 0.9;
+    } else if (neighbor) {
+      var toNeighbor = new THREE.Vector3().subVectors(neighbor.position, originWp);
+      f.reach = toNeighbor.length();
+      f.dir.copy(toNeighbor.normalize());
+      f.duration = 0.9 + Math.random() * 0.7;
+    } else {
+      f.dir.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1).normalize();
+      f.reach = 0;
+      f.duration = 0.5 + Math.random() * 0.7;
+    }
+
+    var up = Math.abs(f.dir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    f.perp1.crossVectors(f.dir, up).normalize();
+    f.perp2.crossVectors(f.dir, f.perp1).normalize();
+    f.life = 0;
+    f.seed = Math.random() * 100;
+
+    var col = new THREE.Color(colorForObj(originObj));
+    if (f.bridge) {
+      col.lerp(new THREE.Color(colorForObj(bridgeTarget)), 0.5);
+      col.lerp(new THREE.Color(0xffffff), 0.7);
+    } else if (f.linked) {
+      col.lerp(new THREE.Color(0xffffff), 0.6);
+    }
+    f.line.material.color.copy(col);
+  }
+
+  function kickFilaments() {
+    filamentPool.forEach(function (f) {
+      resetFilament(f);
+      f.life = Math.random() * f.duration * 0.25;
+    });
+  }
+
+  function startFilaments() {
+    kickFilaments();
+  }
+
+  function stopFilaments() {
+    filamentPool.forEach(function (f) {
+      f.line.material.opacity = 0;
+      if (f.wasConnected && f.targetObj) { untouchObject(f.targetObj); f.wasConnected = false; }
+    });
+  }
+
+  function updateFilaments(dt, t) {
+    var objs = lockedObjs();
+    if (!objs.length) { stopFilaments(); return; }
+    filamentPool.forEach(function (f) {
+      f.life += dt;
+      if (f.life > f.duration) resetFilament(f);
+      if (f.originIndex == null || f.originIndex >= objs.length) f.originIndex = 0;
+      var originObj = objs[f.originIndex];
+      if (!originObj) return;
+      var wp = new THREE.Vector3();
+      originObj.getWorldPosition(wp);
+      var baseRadius = originObj === core ? 70 : originObj.userData.baseScale * 1.3;
+      var camDist = camera.position.distanceTo(wp);
+      var effRadius = baseRadius + camDist * 0.09;
+
+      var prog = f.life / f.duration;
+      var grow = Math.min(prog * 2.2, 1);
+      var fade = prog < 0.55 ? prog / 0.55 : Math.max(0, 1 - (prog - 0.55) / 0.45);
+      var startOffset = f.linked ? baseRadius * 0.35 : effRadius * 0.5;
+      var reachTotal = f.linked ? f.reach : effRadius * 2.4;
+      var arr = f.line.geometry.attributes.position.array;
+      for (var s = 0; s <= FIL_SEGS; s++) {
+        var frac = (s / FIL_SEGS) * grow;
+        var dist = startOffset + (reachTotal - startOffset) * frac;
+        var wob = (1 - frac) * (f.linked ? baseRadius * 0.15 : effRadius * 0.3);
+        var w1 = Math.sin(t * 5 + f.seed + s * 1.7) * wob;
+        var w2 = Math.cos(t * 4.2 + f.seed * 1.3 + s * 1.1) * wob;
+        var px = wp.x + f.dir.x * dist + f.perp1.x * w1 + f.perp2.x * w2;
+        var py = wp.y + f.dir.y * dist + f.perp1.y * w1 + f.perp2.y * w2;
+        var pz = wp.z + f.dir.z * dist + f.perp1.z * w1 + f.perp2.z * w2;
+        arr[s * 3] = px; arr[s * 3 + 1] = py; arr[s * 3 + 2] = pz;
+      }
+      f.line.geometry.attributes.position.needsUpdate = true;
+      var peakOpacity = f.bridge ? 1.0 : (f.linked ? 0.9 : 0.65);
+      f.line.material.opacity = fade * peakOpacity;
+
+      var connected = f.linked && !f.bridge && grow >= 0.92 && fade > 0.05;
+      if (connected && !f.wasConnected) {
+        if (f.targetObj) touchObject(f.targetObj);
+        f.wasConnected = true;
+      } else if (!connected && f.wasConnected) {
+        if (f.targetObj) untouchObject(f.targetObj);
+        f.wasConnected = false;
+      }
+    });
+  }
+
+  var floaterContainer = document.getElementById('dataFloaters');
+  var floaters = [];
+  var FLOATER_COUNT = 12;
+  var FLOATERS_PER_GROUP = 6;
+  for (var fi = 0; fi < FLOATER_COUNT; fi++) {
+    var el = document.createElement('div');
+    el.className = 'dfloat';
+    floaterContainer.appendChild(el);
+    floaters.push({
+      el: el,
+      group: fi < FLOATERS_PER_GROUP ? 0 : 1,
+      angle: ((fi % FLOATERS_PER_GROUP) / FLOATERS_PER_GROUP) * Math.PI * 2,
+      speed: 0.25 + Math.random() * 0.35,
+      radius: 46 + Math.random() * 60,
+      vBias: (Math.random() * 2 - 1) * 30,
+      dir: Math.random() < 0.5 ? -1 : 1
+    });
+  }
+
+  function hex(len) {
+    var s = '';
+    var chars = '0123456789ABCDEF';
+    for (var i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
+    return s;
+  }
+
+  function dataLines(name, isCore) {
+    if (isCore) {
+      return [
+        'CORE ARRAY // UNCLASSIFIED',
+        'CIPHER ' + hex(4) + '-' + hex(4) + '-' + hex(4),
+        'SIZE ' + (800 + Math.floor(Math.random()*400)) + ' PB',
+        'ICE DENSITY ' + (60 + Math.floor(Math.random()*35)) + '%',
+        'TRACE ' + (Math.random() < 0.5 ? 'inactive' : 'building') ,
+        'LINK ' + hex(2) + ':' + hex(2) + ':' + hex(2) + ':' + hex(2)
+      ];
+    }
+    return [
+      name.toUpperCase() + ' ARRAY',
+      'CHKSUM ' + hex(4) + '-' + hex(4),
+      'SIZE ' + (1 + Math.floor(Math.random()*900)) + ' TB',
+      'CIPHER RSA-' + (1024 * (1 + Math.floor(Math.random()*3))),
+      'ACCESS ' + (Math.random() < 0.5 ? 'read-only' : 'restricted'),
+      'LATENCY ' + (4 + Math.floor(Math.random()*40)) + 'ms'
+    ];
+  }
+
+  function showFloaters(name, isCore, group) {
+    var lines = dataLines(name, isCore);
+    floaters.forEach(function (f, i) {
+      if (f.group !== group) return;
+      f.el.textContent = lines[i % lines.length];
+      f.el.classList.add('show');
+    });
+  }
+
+  function hideFloaters(group) {
+    floaters.forEach(function (f) {
+      if (group !== undefined && f.group !== group) return;
+      f.el.classList.remove('show');
+    });
+  }
+
+  function updateFloaters(dt, t) {
+    var objs = lockedObjs();
+    [0, 1].forEach(function (group) {
+      var obj = objs[group];
+      if (!obj) return;
+      var wp = new THREE.Vector3();
+      obj.getWorldPosition(wp);
+      wp.project(camera);
+      if (wp.z > 1 || wp.z < -1) { hideFloaters(group); return; }
+      var sx = (wp.x * 0.5 + 0.5) * window.innerWidth;
+      var sy = (-wp.y * 0.5 + 0.5) * window.innerHeight;
+
+      floaters.forEach(function (f) {
+        if (f.group !== group) return;
+        f.angle += dt * f.speed * f.dir;
+        var ox = Math.cos(f.angle) * f.radius;
+        var oy = Math.sin(f.angle) * f.radius * 0.5 + f.vBias;
+        f.el.style.transform = 'translate(' + (sx + ox) + 'px,' + (sy + oy) + 'px)';
+        if (Math.random() < 0.004) {
+          var lines = dataLines(nameFor(obj), obj === core);
+          f.el.textContent = lines[Math.floor(Math.random() * lines.length)];
+        }
+      });
+    });
+  }
+
+
+  function onMove(clientX, clientY) {
+    var nx = (clientX / window.innerWidth) * 2 - 1;
+    var ny = (clientY / window.innerHeight) * 2 - 1;
+    targetYaw = -nx * 0.55;
+    targetPitch = ny * 0.32;
+  }
+
+  window.addEventListener('pointermove', function (e) { onMove(e.clientX, e.clientY); }, { passive: true });
+
+  window.addEventListener('pointerdown', function (e) {
+    var locked = tryLockAt(e.clientX, e.clientY, e.pointerId);
+    if (!locked && lockedObjs().length === 0) {
+      targetSpeed = BOOST_SPEED;
+      document.getElementById('hud-ice').textContent = 'engaged';
+    }
+  }, { passive: true });
+
+  window.addEventListener('pointerup', function (e) {
+    releaseLockForPointer(e.pointerId);
+    document.getElementById('hud-ice').textContent = lockedObjs().length ? 'engaged' : 'passive';
+  }, { passive: true });
+
+  window.addEventListener('touchmove', function (e) {
+    if (e.touches && e.touches[0]) onMove(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+
+  // ---------- title sequence ----------
+  setTimeout(function () {
+    document.getElementById('title').classList.add('shrink');
+  }, 2600);
+  setTimeout(function () {
+    document.getElementById('hint').classList.add('gone');
+  }, 5200);
+
+  // ---------- HUD data ----------
+  var hudNode = document.getElementById('hud-node');
+  var hudDepth = document.getElementById('hud-depth');
+  var hudTp = document.getElementById('hud-tp');
+  var hudVec = document.getElementById('hud-vec');
+  var hudNear = document.getElementById('hud-near');
+
+  // ---------- animation loop ----------
+  var clock = new THREE.Clock();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    var dt = Math.min(clock.getDelta(), 0.05);
+    var t = clock.elapsedTime;
+
+    yaw += (targetYaw - yaw) * 0.04;
+    pitch += (targetPitch - pitch) * 0.04;
+    speed += (targetSpeed - speed) * 0.03;
+
+    camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+
+    camera.position.z -= speed * dt;
+    camera.position.x += Math.sin(t * 0.15) * 0.02;
+    camera.position.y += Math.cos(t * 0.12) * 0.015;
+
+    if (camera.position.z < -TUNNEL_LEN + 40) {
+      camera.position.z = 0;
+    }
+
+    var nearestDist = Infinity, nearestName = '';
+    for (var i = 0; i < structures.length; i++) {
+      var m = structures[i];
+      m.rotation.x += m.userData.spin * dt;
+      m.rotation.y += m.userData.spin * 0.7 * dt;
+      if (m.userData.isIce) {
+        var pulse = 1 + Math.sin(t * 3 + m.position.x) * 0.08;
+        m.scale.setScalar(m.userData.baseScale * pulse);
+      }
+      var d = camera.position.distanceTo(m.position);
+      if (d < nearestDist) { nearestDist = d; nearestName = m.userData.name; }
+    }
+
+    core.rotation.y += dt * 0.15;
+    core.rotation.x += dt * 0.05;
+    var corePulse = 1 + Math.sin(t * 1.4) * 0.05;
+    var locked = lockedObjs();
+    if (locked.indexOf(core) !== -1) corePulse += Math.sin(t * 6) * 0.04;
+    core.scale.setScalar(corePulse);
+
+    locked.forEach(function (o) {
+      if (o === core) return;
+      var lockPulse = 1 + Math.sin(t * 6) * 0.06;
+      o.scale.setScalar(o.userData.baseScale * lockPulse);
+    });
+
+    touchCounts.forEach(function (count, o) {
+      var lockPulse = 1 + Math.sin(t * 6) * 0.06;
+      o.scale.setScalar(o.userData.baseScale * lockPulse);
+    });
+
+    updateFloaters(dt, t);
+    updateFilaments(dt, t);
+
+    // HUD
+    hudDepth.textContent = Math.max(0, Math.round(-camera.position.z)).toString().padStart(4, '0');
+    hudTp.textContent = (speed * 7.3).toFixed(1);
+    hudVec.textContent = yaw.toFixed(2) + ' / ' + pitch.toFixed(2);
+    if (nearestName) hudNear.textContent = nearestName + ' (' + Math.round(nearestDist) + 'm)';
+    if (Math.floor(t) % 4 === 0 && Math.floor(t * 10) % 10 === 0) {
+      hudNode.textContent = 'CASE_' + (10 + (Math.floor(t) % 89)).toString().padStart(2,'0');
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+</script>
+</body>
+</html>
