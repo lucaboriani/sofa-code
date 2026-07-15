@@ -5,7 +5,7 @@ test('home renders all room cards with no console errors', async ({ page }) => {
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto('/');
-  await expect(page.locator('[data-room-card]')).toHaveCount(9);
+  await expect(page.locator('[data-room-card]')).toHaveCount(10);
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
 

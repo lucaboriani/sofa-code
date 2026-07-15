@@ -13,7 +13,7 @@ test('clicking a card navigates into the room with no console errors', async ({ 
 });
 
 test('audio prompt appears on every audio-enabled room', async ({ page }) => {
-  for (const slug of ['tunnel', 'swarm', 'neural', 'ikebana', 'bindu', 'catfish', 'beauty', 'sri-yantra'] as const) {
+  for (const slug of ['tunnel', 'swarm', 'neural', 'ikebana', 'bindu', 'catfish', 'beauty', 'sri-yantra', 'cyberspace'] as const) {
     await page.goto(`/rooms/${slug}`);
     await expect(page.locator(`[data-audio-prompt="${slug}"]`)).toBeVisible();
   }
@@ -26,7 +26,7 @@ test('back-to-gallery from a room does not throw', async ({ page }) => {
   await page.goto('/rooms/swarm');
   await page.locator('.room-back').click();
   await page.waitForURL(/\/$/);
-  await expect(page.locator('[data-room-card]')).toHaveCount(9);
+  await expect(page.locator('[data-room-card]')).toHaveCount(10);
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
 
@@ -39,6 +39,16 @@ test('direct navigation across rooms does not throw', async ({ page }) => {
   await expect(page.locator('[data-room-stage="tunnel"]')).toBeVisible();
   await page.goto('/rooms/sri-yantra');
   await expect(page.locator('[data-room-stage="sri-yantra"]')).toBeVisible();
+  await page.goto('/rooms/cyberspace');
+  const stage = page.locator('[data-room-stage="cyberspace"]');
+  await expect(stage).toBeVisible();
   await page.waitForTimeout(500); // let a few RAF frames run
+  const box = await stage.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(300);
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
