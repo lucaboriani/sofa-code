@@ -5,6 +5,8 @@ import {
 } from '@/lib/rooms/cyberspace/geometry';
 import { mount } from '@/lib/rooms/cyberspace/mount';
 import { sharedState } from '@/lib/rooms/cyberspace/state';
+import { makeFakeAudio, advanceFakeAudio } from '../../fixtures/fake-audio';
+import { createAudio } from '@/lib/rooms/cyberspace/audio';
 
 describe('cyberspace geometry', () => {
   it('buildStructures returns the requested count with valid fields', () => {
@@ -221,5 +223,33 @@ describe('cyberspace.mount — HUD overlay', () => {
     const handle = mount(canvas, { quality: 'preview', audio: false });
     expect(document.querySelector('[data-cyberspace-overlay]')).toBeNull();
     handle.teardown();
+  });
+});
+
+describe('cyberspace.createAudio', () => {
+  it('returns a node and a tick that survives every lock-level tier without throwing', () => {
+    const fake = makeFakeAudio();
+    const audio = createAudio(fake as unknown as AudioContext);
+    expect(audio.node).toBeTruthy();
+    expect(typeof audio.tick).toBe('function');
+    for (let i = 0; i < 30; i++) {
+      advanceFakeAudio(fake, 100);
+      sharedState.lockLevel = (i % 3) as 0 | 1 | 2;
+      sharedState.bridgeActive = i % 2 === 0;
+      sharedState.speed = (i % 12) - 1;
+      expect(() => audio.tick!()).not.toThrow();
+    }
+  });
+
+  it('dispose() clears the ping-scheduler timeout', () => {
+    vi.useFakeTimers();
+    const fake = makeFakeAudio();
+    const audio = createAudio(fake as unknown as AudioContext);
+    expect(typeof audio.dispose).toBe('function');
+    audio.dispose!();
+    const pending = vi.getTimerCount();
+    vi.advanceTimersByTime(20000);
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(pending);
+    vi.useRealTimers();
   });
 });

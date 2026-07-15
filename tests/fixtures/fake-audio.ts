@@ -61,6 +61,7 @@ export interface FakeAudioContext {
     getChannelData(ch: number): Float32Array;
   };
   createConvolver(): { buffer: unknown; connect(d: unknown): void; disconnect(): void };
+  createWaveShaper(): { curve: Float32Array | null; oversample: string; connect(d: unknown): void; disconnect(): void };
   createDelay(maxDelay?: number): { delayTime: ReturnType<typeof makeAudioParam>; connect(d: unknown): void; disconnect(): void };
   createConstantSource(): { offset: ReturnType<typeof makeAudioParam>; connect(d: unknown): void; start(): void };
   createAnalyser(): FakeAnalyser;
@@ -156,6 +157,9 @@ export function makeFakeAudio(): FakeAudioContext {
     },
     createConvolver() {
       return { buffer: null as unknown, connect() {}, disconnect() {} };
+    },
+    createWaveShaper() {
+      return { curve: null as Float32Array | null, oversample: 'none', connect() {}, disconnect() {} };
     },
     createDelay(_maxDelay?: number) {
       return { delayTime: makeAudioParam(0), connect() {}, disconnect() {} };
