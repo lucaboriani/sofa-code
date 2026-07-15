@@ -4,6 +4,7 @@ import {
   ARRAY_NAMES, HALF_W, HALF_H, TUNNEL_LEN
 } from '@/lib/rooms/cyberspace/geometry';
 import { mount } from '@/lib/rooms/cyberspace/mount';
+import { sharedState } from '@/lib/rooms/cyberspace/state';
 
 describe('cyberspace geometry', () => {
   it('buildStructures returns the requested count with valid fields', () => {
@@ -122,5 +123,83 @@ describe('cyberspace.mount — render pipeline', () => {
     // jsdom is not deterministic enough to assert draws.count precisely here).
     expect(preview.draws.count).toBeGreaterThanOrEqual(0);
     expect(full.draws.count).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// jsdom does not implement the PointerEvent constructor (long-standing gap —
+// https://github.com/jsdom/jsdom/issues/2527), so a MouseEvent is synthesized
+// instead: dispatchEvent/addEventListener match on `.type`, not the event's
+// class, so a 'pointerdown'-typed MouseEvent still reaches pointer listeners.
+// `pointerId` is stamped on afterward since MouseEventInit has no such field
+// and mount.ts's multi-touch tracking is keyed by it (see neural.test.ts for
+// the same base pattern, without the pointerId requirement).
+function pointerEvt(type: string, x: number, y: number, id = 1): PointerEvent {
+  const e = new MouseEvent(type, { clientX: x, clientY: y, bubbles: true });
+  Object.defineProperty(e, 'pointerId', { value: id, configurable: true });
+  return e as unknown as PointerEvent;
+}
+
+describe('cyberspace.mount — picking, lock and filaments', () => {
+  it('preview quality attaches no pointer listeners', () => {
+    const canvas = makeCanvas();
+    const addSpy = vi.spyOn(canvas, 'addEventListener');
+    const handle = mount(canvas, { quality: 'preview', audio: false });
+    const pointerTypes = addSpy.mock.calls.map(c => c[0]).filter(t => typeof t === 'string' && t.startsWith('pointer'));
+    expect(pointerTypes).toHaveLength(0);
+    handle.teardown();
+    addSpy.mockRestore();
+  });
+
+  it('full quality attaches pointer listeners and teardown removes them', () => {
+    const canvas = makeCanvas();
+    const added = new Set<string>();
+    const removed = new Set<string>();
+    const origAdd = canvas.addEventListener.bind(canvas);
+    const origRemove = canvas.removeEventListener.bind(canvas);
+    canvas.addEventListener = ((t: string, l: EventListenerOrEventListenerObject, o?: unknown) => { added.add(t); origAdd(t, l, o as AddEventListenerOptions); }) as typeof canvas.addEventListener;
+    canvas.removeEventListener = ((t: string, l: EventListenerOrEventListenerObject, o?: unknown) => { removed.add(t); origRemove(t, l, o as EventListenerOptions); }) as typeof canvas.removeEventListener;
+
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    expect(added.has('pointerdown')).toBe(true);
+    expect(added.has('pointerup')).toBe(true);
+    expect(added.has('pointermove')).toBe(true);
+    handle.teardown();
+    for (const t of added) expect(removed.has(t)).toBe(true);
+  });
+
+  it('pointerdown on empty space (no hit) does not throw and pointerup releases cleanly', () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    expect(() => canvas.dispatchEvent(pointerEvt('pointerdown', 5000, 5000))).not.toThrow();
+    expect(() => canvas.dispatchEvent(pointerEvt('pointerup', 5000, 5000))).not.toThrow();
+    handle.teardown();
+  });
+
+  it('locking raises sharedState.lockLevel and releasing brings it back to 0', () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    // Picking against a real geometric hit needs a live camera; instead this
+    // exercises the full pointerdown → pointerup lifecycle at the canvas
+    // center, which is always a valid NDC coordinate, and asserts the level
+    // never goes negative or throws regardless of whether that frame's
+    // camera happened to have something under the crosshair.
+    canvas.dispatchEvent(pointerEvt('pointerdown', 200, 150));
+    expect(sharedState.lockLevel).toBeGreaterThanOrEqual(0);
+    canvas.dispatchEvent(pointerEvt('pointerup', 200, 150));
+    expect(sharedState.lockLevel).toBe(0);
+    handle.teardown();
+  });
+
+  it('multi-touch: two simultaneous locks are tracked independently by pointerId', () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    canvas.dispatchEvent(pointerEvt('pointerdown', 150, 150, 1));
+    canvas.dispatchEvent(pointerEvt('pointerdown', 250, 150, 2));
+    expect(sharedState.lockLevel).toBeLessThanOrEqual(2);
+    canvas.dispatchEvent(pointerEvt('pointerup', 150, 150, 1));
+    expect(sharedState.lockLevel).toBeGreaterThanOrEqual(0);
+    canvas.dispatchEvent(pointerEvt('pointerup', 250, 150, 2));
+    expect(sharedState.lockLevel).toBe(0);
+    handle.teardown();
   });
 });

@@ -8,6 +8,7 @@ import { ICOSAHEDRON, OCTAHEDRON, BOX, TETRAHEDRON, type Wireframe } from '@/lib
 import { VS_LINE, FS_LINE, VS_PT, FS_PT } from './shaders';
 import { buildStructures, buildParticles, buildCore, TUNNEL_LEN, HALF_W, HALF_H, type SolidType } from './geometry';
 import { sharedState, resetState } from './state';
+import { rayFromCamera, intersectSphere } from '@/lib/webgl/raycast';
 
 const STRUCTURE_COUNT = { preview: 60, full: 240 } as const;
 const PARTICLE_COUNT = { preview: 800, full: 2600 } as const;
@@ -23,6 +24,8 @@ const CYAN: readonly [number, number, number] = [0, 0.53, 0.64];
 const ICE: readonly [number, number, number] = [0.64, 0.09, 0.25];
 const GOLD: readonly [number, number, number] = [0.64, 0.51, 0.18];
 const DUST: readonly [number, number, number] = [0.24, 0.43, 0.45];
+const BOOST_SPEED = 30;
+const LIT: readonly [number, number, number] = [1, 1, 1];
 
 const SOLIDS: Record<SolidType, Wireframe> = { ico: ICOSAHEDRON, oct: OCTAHEDRON, box: BOX, tet: TETRAHEDRON };
 
@@ -178,6 +181,27 @@ export const mount: RoomMount = (canvas, opts) => {
   let yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
   let speed = BASE_SPEED, targetSpeed = BASE_SPEED;
 
+  // ── Tap-to-lock (full quality only) ────────────────────────────────────────
+  const CORE_ID = structureCount; // sentinel target id for the core
+  const pointerLocks = new Map<number, number>(); // pointerId -> target id
+  const touchCounts = new Map<number, number>();  // target id -> filament-touch refcount
+
+  function uniqueLockedIds(): number[] {
+    return [...new Set(pointerLocks.values())];
+  }
+
+  function pickAt(ndcX: number, ndcY: number): number | null {
+    const ray = rayFromCamera([camX, camY, camZ], yaw, pitch, ndcX, ndcY, FOV_Y, RW / RH || 1);
+    let bestT = Infinity, bestId: number | null = null;
+    for (let i = 0; i < structureCount; i++) {
+      const tHit = intersectSphere(ray.origin, ray.dir, structures[i].position, structures[i].scale * 1.3);
+      if (tHit !== null && tHit < bestT) { bestT = tHit; bestId = i; }
+    }
+    const tCore = intersectSphere(ray.origin, ray.dir, core.position, core.outerScale * 1.3);
+    if (tCore !== null && tCore < bestT) { bestT = tCore; bestId = CORE_ID; }
+    return bestId;
+  }
+
   function chase(cur: number, target: number, dt: number): number {
     return cur + (target - cur) * (1 - Math.exp(-CAM_CHASE_RATE * dt));
   }
@@ -208,6 +232,169 @@ export const mount: RoomMount = (canvas, opts) => {
   });
   RW = canvas.width || 1; RH = canvas.height || 1;
 
+  // ── Filament pool (16 short polylines bridging/flickering from locked objects) ──
+  const FILAMENT_COUNT = 16;
+  const FIL_SEGS = 5;
+  interface Filament {
+    originId: number; targetId: number | null; bridge: boolean; linked: boolean;
+    dirX: number; dirY: number; dirZ: number;
+    perp1X: number; perp1Y: number; perp1Z: number;
+    perp2X: number; perp2Y: number; perp2Z: number;
+    reach: number; life: number; duration: number; seed: number;
+    colorR: number; colorG: number; colorB: number;
+  }
+  const filaments: Filament[] = Array.from({ length: FILAMENT_COUNT }, () => ({
+    originId: 0, targetId: null, bridge: false, linked: false,
+    dirX: 0, dirY: 0, dirZ: 1, perp1X: 1, perp1Y: 0, perp1Z: 0, perp2X: 0, perp2Y: 1, perp2Z: 0,
+    reach: 0, life: 0, duration: 0.6, seed: Math.random() * 100,
+    colorR: 1, colorG: 1, colorB: 1
+  }));
+  const filPos = new Float32Array(FILAMENT_COUNT * (FIL_SEGS + 1) * 3);
+  const filColor = new Float32Array(FILAMENT_COUNT * (FIL_SEGS + 1) * 3);
+  const filAlpha = new Float32Array(FILAMENT_COUNT * (FIL_SEGS + 1));
+  const filIdx = new Uint16Array(FILAMENT_COUNT * FIL_SEGS * 2);
+  {
+    let k = 0;
+    for (let f = 0; f < FILAMENT_COUNT; f++) {
+      const base = f * (FIL_SEGS + 1);
+      for (let s = 0; s < FIL_SEGS; s++) { filIdx[k++] = base + s; filIdx[k++] = base + s + 1; }
+    }
+  }
+  const filPosB = gl.createBuffer()!;
+  const filColorB = gl.createBuffer()!;
+  const filAlphaB = gl.createBuffer()!;
+  const filIdxB = gl.createBuffer()!;
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, filIdxB);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, filIdx, gl.STATIC_DRAW);
+
+  function targetPos(id: number): readonly [number, number, number] { return id === CORE_ID ? core.position : structures[id].position; }
+  function targetBaseRadius(id: number): number { return id === CORE_ID ? core.outerScale * 0.7 : structures[id].scale * 1.3; }
+  function targetColor(id: number): readonly [number, number, number] { return id === CORE_ID ? GOLD : (structures[id].isIce ? ICE : CYAN); }
+
+  function touchTarget(id: number): void {
+    if (uniqueLockedIds().includes(id)) return;
+    touchCounts.set(id, (touchCounts.get(id) ?? 0) + 1);
+  }
+  function untouchTarget(id: number): void {
+    const c = touchCounts.get(id);
+    if (c === undefined) return;
+    if (c <= 1) touchCounts.delete(id); else touchCounts.set(id, c - 1);
+  }
+
+  function findNeighbor(originPos: readonly [number, number, number], excludeId: number): number | null {
+    const maxDist = 150, candidates: number[] = [];
+    for (let i = 0; i < structureCount; i++) {
+      if (i === excludeId) continue;
+      const p = structures[i].position;
+      const d = Math.hypot(originPos[0] - p[0], originPos[1] - p[1], originPos[2] - p[2]);
+      if (d < maxDist && d > 5) candidates.push(i);
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  function resetFilament(f: Filament): void {
+    if (f.linked && f.targetId !== null) untouchTarget(f.targetId);
+    const locked = uniqueLockedIds();
+    if (locked.length === 0) { f.linked = false; f.bridge = false; f.targetId = null; return; }
+
+    const originId = locked[Math.floor(Math.random() * locked.length)];
+    f.originId = originId;
+    const originPos = targetPos(originId);
+
+    let bridgeTarget: number | null = null;
+    if (locked.length >= 2 && Math.random() < 0.65) {
+      const others = locked.filter(id => id !== originId);
+      bridgeTarget = others[Math.floor(Math.random() * others.length)];
+    }
+    const neighbor = bridgeTarget === null && Math.random() < 0.35 ? findNeighbor(originPos, originId) : null;
+
+    f.bridge = bridgeTarget !== null;
+    f.linked = bridgeTarget !== null || neighbor !== null;
+    f.targetId = bridgeTarget ?? neighbor;
+
+    let dx: number, dy: number, dz: number;
+    if (f.targetId !== null) {
+      const tp = targetPos(f.targetId);
+      dx = tp[0] - originPos[0]; dy = tp[1] - originPos[1]; dz = tp[2] - originPos[2];
+      f.reach = Math.hypot(dx, dy, dz);
+      f.duration = f.bridge ? 1.1 + Math.random() * 0.9 : 0.9 + Math.random() * 0.7;
+    } else {
+      dx = Math.random() * 2 - 1; dy = Math.random() * 2 - 1; dz = Math.random() * 2 - 1;
+      f.reach = 0;
+      f.duration = 0.5 + Math.random() * 0.7;
+    }
+    const len = Math.hypot(dx, dy, dz) || 1;
+    f.dirX = dx / len; f.dirY = dy / len; f.dirZ = dz / len;
+    const upX = Math.abs(f.dirY) < 0.9 ? 0 : 1, upY = Math.abs(f.dirY) < 0.9 ? 1 : 0;
+    f.perp1X = f.dirY * 0 - f.dirZ * upY; f.perp1Y = f.dirZ * upX - f.dirX * 0; f.perp1Z = f.dirX * upY - f.dirY * upX;
+    const p1len = Math.hypot(f.perp1X, f.perp1Y, f.perp1Z) || 1;
+    f.perp1X /= p1len; f.perp1Y /= p1len; f.perp1Z /= p1len;
+    f.perp2X = f.dirY * f.perp1Z - f.dirZ * f.perp1Y;
+    f.perp2Y = f.dirZ * f.perp1X - f.dirX * f.perp1Z;
+    f.perp2Z = f.dirX * f.perp1Y - f.dirY * f.perp1X;
+
+    f.life = 0;
+    f.seed = Math.random() * 100;
+    const oc = targetColor(originId);
+    let cr = oc[0], cg = oc[1], cb = oc[2];
+    if (f.bridge && f.targetId !== null) {
+      const tc = targetColor(f.targetId);
+      cr = (cr + tc[0]) / 2 * 0.3 + 0.7; cg = (cg + tc[1]) / 2 * 0.3 + 0.7; cb = (cb + tc[2]) / 2 * 0.3 + 0.7;
+    } else if (f.linked) {
+      cr = cr * 0.4 + 0.6; cg = cg * 0.4 + 0.6; cb = cb * 0.4 + 0.6;
+    }
+    f.colorR = cr; f.colorG = cg; f.colorB = cb;
+    if (f.linked && f.targetId !== null) touchTarget(f.targetId);
+  }
+
+  function kickFilaments(): void {
+    for (const f of filaments) { resetFilament(f); f.life = Math.random() * f.duration * 0.25; }
+  }
+
+  const pointerCleanups: Array<() => void> = [];
+  if (opts.quality === 'full') {
+    function ndcFromEvent(e: PointerEvent): [number, number] {
+      const r = canvas.getBoundingClientRect();
+      return [((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1)];
+    }
+    const onPointerDown = (e: PointerEvent): void => {
+      const [nx, ny] = ndcFromEvent(e);
+      const hit = pickAt(nx, ny);
+      if (hit !== null) {
+        pointerLocks.set(e.pointerId, hit);
+        targetSpeed = 0;
+        kickFilaments();
+      } else if (uniqueLockedIds().length === 0) {
+        targetSpeed = BOOST_SPEED;
+      }
+      sharedState.lockLevel = Math.min(uniqueLockedIds().length, 2) as 0 | 1 | 2;
+    };
+    const onPointerUp = (e: PointerEvent): void => {
+      pointerLocks.delete(e.pointerId);
+      const locked = uniqueLockedIds();
+      targetSpeed = locked.length ? 0 : BASE_SPEED;
+      sharedState.lockLevel = Math.min(locked.length, 2) as 0 | 1 | 2;
+    };
+    const onPointerMove = (e: PointerEvent): void => {
+      const r = canvas.getBoundingClientRect();
+      const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
+      targetYaw = -nx * 0.55;
+      targetPitch = ny * 0.32;
+    };
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('pointermove', onPointerMove);
+    pointerCleanups.push(
+      () => canvas.removeEventListener('pointerdown', onPointerDown),
+      () => canvas.removeEventListener('pointerup', onPointerUp),
+      () => canvas.removeEventListener('pointercancel', onPointerUp),
+      () => canvas.removeEventListener('pointermove', onPointerMove)
+    );
+  }
+
   // ── Render loop ─────────────────────────────────────────────────────────────
   const loop = createRafLoop((dtMs, tMs) => {
     const dt = Math.min(dtMs / 1000, 0.05);
@@ -223,6 +410,9 @@ export const mount: RoomMount = (canvas, opts) => {
     if (camZ < -TUNNEL_LEN + 40) camZ = 0;
 
     sharedState.speed = speed;
+
+    const lockedIds = uniqueLockedIds();
+    const litSet = new Set<number>([...lockedIds, ...touchCounts.keys()]);
 
     const aspect = RW / RH || 1;
     const proj = perspective(FOV_Y, aspect, NEAR, FAR);
@@ -246,7 +436,7 @@ export const mount: RoomMount = (canvas, opts) => {
       const base = SOLIDS[s.solid].positions;
       const off = vertOffset[i];
       const [pxw, pyw, pzw] = s.position;
-      const [cr, cg, cb] = s.isIce ? ICE : CYAN;
+      const [cr, cg, cb] = litSet.has(i) ? LIT : (s.isIce ? ICE : CYAN);
       for (let v = 0; v < vertCount[i]; v++) {
         const lx = base[v * 3], ly = base[v * 3 + 1], lz = base[v * 3 + 2];
         const ry = ly * cx - lz * sx, rz = ly * sx + lz * cx;       // rotate X
@@ -263,8 +453,9 @@ export const mount: RoomMount = (canvas, opts) => {
     // ── Core (outer icosahedron + inner octahedron) ───────────────────────────
     coreRotY += dt * 0.15; coreRotX += dt * 0.05;
     const corePulse = 1 + Math.sin(t * 1.4) * 0.05;
-    writeCoreShape(ICOSAHEDRON, coreOuterOffset, core.outerScale * corePulse, GOLD);
-    writeCoreShape(OCTAHEDRON, coreInnerOffset, core.innerScale * corePulse, GOLD);
+    const coreColor = litSet.has(CORE_ID) ? LIT : GOLD;
+    writeCoreShape(ICOSAHEDRON, coreOuterOffset, core.outerScale * corePulse, coreColor);
+    writeCoreShape(OCTAHEDRON, coreInnerOffset, core.innerScale * corePulse, coreColor);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, structPosB);
     gl.bufferData(gl.ARRAY_BUFFER, structPos, gl.DYNAMIC_DRAW);
@@ -315,6 +506,55 @@ export const mount: RoomMount = (canvas, opts) => {
     drawGlow(cyanGlow, CYAN);
     drawGlow(iceGlow, ICE);
     drawGlow(coreGlow, GOLD);
+
+    // ── Filaments (additive blend, indexed LINES) ─────────────────────────────
+    if (lockedIds.length === 0) {
+      filAlpha.fill(0);
+    } else {
+      for (const f of filaments) {
+        f.life += dt;
+        if (f.life > f.duration) resetFilament(f);
+        const originPos = targetPos(f.originId);
+        const baseRadius = targetBaseRadius(f.originId);
+        const camDist = Math.hypot(camX - originPos[0], camY - originPos[1], camZ - originPos[2]);
+        const effRadius = baseRadius + camDist * 0.09;
+        const prog = f.life / f.duration;
+        const grow = Math.min(prog * 2.2, 1);
+        const fade = prog < 0.55 ? prog / 0.55 : Math.max(0, 1 - (prog - 0.55) / 0.45);
+        const startOffset = f.linked ? baseRadius * 0.35 : effRadius * 0.5;
+        const reachTotal = f.linked ? f.reach : effRadius * 2.4;
+        const filBase = filaments.indexOf(f) * (FIL_SEGS + 1);
+        for (let s = 0; s <= FIL_SEGS; s++) {
+          const frac = (s / FIL_SEGS) * grow;
+          const dist = startOffset + (reachTotal - startOffset) * frac;
+          const wob = (1 - frac) * (f.linked ? baseRadius * 0.15 : effRadius * 0.3);
+          const w1 = Math.sin(t * 5 + f.seed + s * 1.7) * wob;
+          const w2 = Math.cos(t * 4.2 + f.seed * 1.3 + s * 1.1) * wob;
+          const vi = (filBase + s) * 3;
+          filPos[vi] = originPos[0] + f.dirX * dist + f.perp1X * w1 + f.perp2X * w2;
+          filPos[vi + 1] = originPos[1] + f.dirY * dist + f.perp1Y * w1 + f.perp2Y * w2;
+          filPos[vi + 2] = originPos[2] + f.dirZ * dist + f.perp1Z * w1 + f.perp2Z * w2;
+          filColor[vi] = f.colorR; filColor[vi + 1] = f.colorG; filColor[vi + 2] = f.colorB;
+          const peak = f.bridge ? 1.0 : (f.linked ? 0.9 : 0.65);
+          filAlpha[filBase + s] = fade * peak;
+        }
+      }
+      sharedState.bridgeActive = filaments.some(f => f.bridge && f.life / f.duration < 0.9);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, filPosB);
+    gl.bufferData(gl.ARRAY_BUFFER, filPos, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, filColorB);
+    gl.bufferData(gl.ARRAY_BUFFER, filColor, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, filAlphaB);
+    gl.bufferData(gl.ARRAY_BUFFER, filAlpha, gl.DYNAMIC_DRAW);
+    gl.useProgram(progLine);
+    gl.uniformMatrix4fv(uLine.uMVP, false, mvp);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    setAttr(gl, progLine, 'aPos', filPosB, 3);
+    setAttr(gl, progLine, 'aColor', filColorB, 3);
+    setAttr(gl, progLine, 'aAlpha', filAlphaB, 1);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, filIdxB);
+    gl.drawElements(gl.LINES, filIdx.length, gl.UNSIGNED_SHORT, 0);
   }, ac.signal);
 
   if (!opts.startPaused) loop.start();
@@ -324,6 +564,7 @@ export const mount: RoomMount = (canvas, opts) => {
       ac.abort();
       loop.stop();
       stopResize();
+      for (const cleanup of pointerCleanups) cleanup();
       try { gl.deleteProgram(progLine); gl.deleteProgram(progPt); } catch { /* idempotent */ }
     },
     pause: (): void => loop.stop(),
