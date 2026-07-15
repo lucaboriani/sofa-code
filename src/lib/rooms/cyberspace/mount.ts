@@ -182,6 +182,24 @@ export const mount: RoomMount = (canvas, opts) => {
     return cur + (target - cur) * (1 - Math.exp(-CAM_CHASE_RATE * dt));
   }
 
+  function writeCoreShape(wf: Wireframe, offset: number, scale: number, color: readonly [number, number, number]): void {
+    const cxr = Math.cos(coreRotX), sxr = Math.sin(coreRotX);
+    const cyr = Math.cos(coreRotY), syr = Math.sin(coreRotY);
+    const base = wf.positions;
+    const n = base.length / 3;
+    for (let v = 0; v < n; v++) {
+      const lx = base[v * 3], ly = base[v * 3 + 1], lz = base[v * 3 + 2];
+      const ry = ly * cxr - lz * sxr, rz = ly * sxr + lz * cxr;
+      const rx2 = lx * cyr + rz * syr, rz2 = -lx * syr + rz * cyr;
+      const vi = (offset + v) * 3;
+      structPos[vi] = rx2 * scale + core.position[0];
+      structPos[vi + 1] = ry * scale + core.position[1];
+      structPos[vi + 2] = rz2 * scale + core.position[2];
+      structColor[vi] = color[0]; structColor[vi + 1] = color[1]; structColor[vi + 2] = color[2];
+      structAlpha[offset + v] = 0.5;
+    }
+  }
+
   // ── Resize ──────────────────────────────────────────────────────────────────
   let RW = 1, RH = 1;
   const stopResize = observeResize(canvas, () => {
@@ -245,23 +263,6 @@ export const mount: RoomMount = (canvas, opts) => {
     // ── Core (outer icosahedron + inner octahedron) ───────────────────────────
     coreRotY += dt * 0.15; coreRotX += dt * 0.05;
     const corePulse = 1 + Math.sin(t * 1.4) * 0.05;
-    function writeCoreShape(wf: Wireframe, offset: number, scale: number, color: readonly [number, number, number]): void {
-      const cxr = Math.cos(coreRotX), sxr = Math.sin(coreRotX);
-      const cyr = Math.cos(coreRotY), syr = Math.sin(coreRotY);
-      const base = wf.positions;
-      const n = base.length / 3;
-      for (let v = 0; v < n; v++) {
-        const lx = base[v * 3], ly = base[v * 3 + 1], lz = base[v * 3 + 2];
-        const ry = ly * cxr - lz * sxr, rz = ly * sxr + lz * cxr;
-        const rx2 = lx * cyr + rz * syr, rz2 = -lx * syr + rz * cyr;
-        const vi = (offset + v) * 3;
-        structPos[vi] = rx2 * scale + core.position[0];
-        structPos[vi + 1] = ry * scale + core.position[1];
-        structPos[vi + 2] = rz2 * scale + core.position[2];
-        structColor[vi] = color[0]; structColor[vi + 1] = color[1]; structColor[vi + 2] = color[2];
-        structAlpha[offset + v] = 0.5;
-      }
-    }
     writeCoreShape(ICOSAHEDRON, coreOuterOffset, core.outerScale * corePulse, GOLD);
     writeCoreShape(OCTAHEDRON, coreInnerOffset, core.innerScale * corePulse, GOLD);
 
@@ -302,8 +303,14 @@ export const mount: RoomMount = (canvas, opts) => {
     gl.drawArrays(gl.POINTS, 0, particleCount);
 
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-    cyanIds.forEach((si, k) => { cyanGlow.size[k] = structures[si].scale * 1.6; });
-    iceIds.forEach((si, k) => { iceGlow.size[k] = structures[si].scale * 1.6 * (1 + Math.sin(t * 3 + structures[si].position[0]) * 0.08); });
+    for (let k = 0; k < cyanIds.length; k++) {
+      const si = cyanIds[k];
+      cyanGlow.size[k] = structures[si].scale * 1.6;
+    }
+    for (let k = 0; k < iceIds.length; k++) {
+      const si = iceIds[k];
+      iceGlow.size[k] = structures[si].scale * 1.6 * (1 + Math.sin(t * 3 + structures[si].position[0]) * 0.08);
+    }
     coreGlow.size[0] = 100 * corePulse;
     drawGlow(cyanGlow, CYAN);
     drawGlow(iceGlow, ICE);
