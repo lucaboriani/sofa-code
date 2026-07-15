@@ -1,0 +1,13 @@
+slug: cyberspace
+title: Cyberspace
+subtitle: WebGL · 3D · Audio
+description: >-
+  Fly through a field of corporate data arrays and ICE-guarded structures.
+  Tap one to lock on, tap a second to bridge them — light filaments trace
+  the connection and the drone stirs. Let go and the HUD keeps its own
+  account of depth, throughput, and whatever's nearest.
+tags: [WebGL, 3D, Generative, Audio]
+year: 2026
+accent: cyan
+hasAudio: true
+order: 10
