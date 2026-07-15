@@ -9,6 +9,8 @@ import { VS_LINE, FS_LINE, VS_PT, FS_PT } from './shaders';
 import { buildStructures, buildParticles, buildCore, TUNNEL_LEN, HALF_W, HALF_H, type SolidType } from './geometry';
 import { sharedState, resetState } from './state';
 import { rayFromCamera, intersectSphere } from '@/lib/webgl/raycast';
+import { worldToScreen } from '@/lib/webgl/project';
+import { makeOverlay, type HudFields, type FloaterTarget } from './overlay';
 
 const STRUCTURE_COUNT = { preview: 60, full: 240 } as const;
 const PARTICLE_COUNT = { preview: 800, full: 2600 } as const;
@@ -398,6 +400,56 @@ export const mount: RoomMount = (canvas, opts) => {
     );
   }
 
+  // ── HUD overlay (full quality only) ────────────────────────────────────────
+  const full = opts.quality === 'full';
+  let overlay: ReturnType<typeof makeOverlay> | null = null;
+  if (full) {
+    overlay = makeOverlay();
+    (canvas.parentElement ?? document.body).appendChild(overlay.root);
+  }
+
+  // Hoisted (not declared inside the RAF tick, matching writeCoreShape above)
+  // so it can be called once synchronously right after mount — before the
+  // first real animation frame — as well as every tick thereafter. A fresh
+  // mount otherwise leaves the corner telemetry blank until the first paint,
+  // which in this project's test harness (fake rAF resolves via a queued
+  // microtask, not synchronously) would never happen inside a synchronous
+  // assertion; painting it once immediately matches what a real browser's
+  // first-frame content should look like anyway.
+  function updateOverlay(mvp: Float32Array, t: number, dt: number, lockedIds: number[]): void {
+    if (!overlay) return;
+    const depth = Math.max(0, Math.round(-camZ)).toString().padStart(4, '0');
+    const throughput = (speed * 7.3).toFixed(1);
+    const vector = `${yaw.toFixed(2)} / ${pitch.toFixed(2)}`;
+    let nearestDist = Infinity, nearestName = '';
+    for (let i = 0; i < structureCount; i++) {
+      const p = structures[i].position;
+      const d = Math.hypot(camX - p[0], camY - p[1], camZ - p[2]);
+      if (d < nearestDist) { nearestDist = d; nearestName = structures[i].name; }
+    }
+    const iceStatus = lockedIds.length || speed > BASE_SPEED + 1 ? 'engaged' : 'passive';
+    const status = lockedIds.length
+      ? `LOCKED · ${lockedIds.map(id => id === CORE_ID ? 'CORE ARRAY' : structures[id].name).join(' ⇄ ')}`
+      : 'nominal';
+    const jackPoint = `CASE_${(10 + (Math.floor(t) % 89)).toString().padStart(2, '0')}`;
+    const fields: HudFields = { jackPoint, depth, status, throughput, iceStatus, vector, nearest: `${nearestName} (${Math.round(nearestDist)}m)` };
+    overlay.updateHud(fields);
+
+    for (let g = 0; g < 2; g++) {
+      const id = lockedIds[g];
+      if (id === undefined) { overlay.updateFloater(g as 0 | 1, null, dt); continue; }
+      const pos = targetPos(id);
+      const name = id === CORE_ID ? 'CORE ARRAY' : structures[id].name;
+      const sp = worldToScreen(mvp, pos, RW, RH);
+      const target: FloaterTarget = { name, isCore: id === CORE_ID, x: sp.x, y: sp.y, visible: !sp.behindCamera };
+      overlay.updateFloater(g as 0 | 1, target, dt);
+    }
+  }
+  // Initial synchronous paint (see comment above) — mvp is unused on this
+  // call since uniqueLockedIds() is always empty pre-mount, so a zeroed
+  // placeholder is fine; the first real tick supplies the true matrix.
+  if (full) updateOverlay(new Float32Array(16), 0, 0, uniqueLockedIds());
+
   // ── Render loop ─────────────────────────────────────────────────────────────
   const loop = createRafLoop((dtMs, tMs) => {
     const dt = Math.min(dtMs / 1000, 0.05);
@@ -561,6 +613,9 @@ export const mount: RoomMount = (canvas, opts) => {
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, filIdxB);
       gl.drawElements(gl.LINES, filIdx.length, gl.UNSIGNED_SHORT, 0);
     }
+
+    // ── HUD + floating labels (full quality only) ────────────────────────────
+    if (full) updateOverlay(mvp, t, dt, lockedIds);
   }, ac.signal);
 
   if (!opts.startPaused) loop.start();
@@ -571,6 +626,7 @@ export const mount: RoomMount = (canvas, opts) => {
       loop.stop();
       stopResize();
       for (const cleanup of pointerCleanups) cleanup();
+      overlay?.root.remove();
       try { gl.deleteProgram(progLine); gl.deleteProgram(progPt); } catch { /* idempotent */ }
     },
     pause: (): void => loop.stop(),

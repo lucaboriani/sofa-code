@@ -203,3 +203,23 @@ describe('cyberspace.mount — picking, lock and filaments', () => {
     handle.teardown();
   });
 });
+
+describe('cyberspace.mount — HUD overlay', () => {
+  it('full quality injects the HUD overlay; teardown removes it', () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    const overlay = document.querySelector('[data-cyberspace-overlay]');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.textContent).toContain('JACK POINT');
+    expect(overlay!.textContent).toContain('DEPTH');
+    handle.teardown();
+    expect(document.querySelector('[data-cyberspace-overlay]')).toBeNull();
+  });
+
+  it('preview quality injects no overlay', () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'preview', audio: false });
+    expect(document.querySelector('[data-cyberspace-overlay]')).toBeNull();
+    handle.teardown();
+  });
+});
