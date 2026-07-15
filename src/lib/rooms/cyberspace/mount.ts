@@ -416,6 +416,8 @@ export const mount: RoomMount = (canvas, opts) => {
   // microtask, not synchronously) would never happen inside a synchronous
   // assertion; painting it once immediately matches what a real browser's
   // first-frame content should look like anyway.
+  // Second sanctioned per-frame-allocation exception: allocates HudFields + up to 2 FloaterTarget/ScreenPoint
+  // objects per call, but only when quality === 'full' (never in preview).
   function updateOverlay(mvp: Float32Array, t: number, dt: number, lockedIds: number[]): void {
     if (!overlay) return;
     const depth = Math.max(0, Math.round(-camZ)).toString().padStart(4, '0');
