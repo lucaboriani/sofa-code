@@ -370,7 +370,22 @@ export const mount: RoomMount = (canvas, opts) => {
       const r = canvas.getBoundingClientRect();
       return [((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1)];
     }
+    // A fast double-tap is conventionally a zoom gesture (already suppressed
+    // via touch-action:none on the canvas), not a deliberate pick — without
+    // this, two taps close together in time and space each independently
+    // raycast and can lock onto whatever's nearby, reading as an accidental
+    // "double tap selects something" glitch. Mirrors the OS double-tap
+    // window/tolerance so it only catches genuine double-taps, not two
+    // separate deliberate taps.
+    const DOUBLE_TAP_MS = 300;
+    const DOUBLE_TAP_PX = 40;
+    let lastTapTime = -Infinity, lastTapX = 0, lastTapY = 0;
     const onPointerDown = (e: PointerEvent): void => {
+      const isDoubleTap = e.timeStamp - lastTapTime < DOUBLE_TAP_MS &&
+        Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < DOUBLE_TAP_PX;
+      lastTapTime = e.timeStamp; lastTapX = e.clientX; lastTapY = e.clientY;
+      if (isDoubleTap) return;
+
       const [nx, ny] = ndcFromEvent(e);
       const hit = pickAt(nx, ny);
       if (hit !== null) {

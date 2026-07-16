@@ -53,9 +53,20 @@ export function makeOverlay(): {
   // bottom-right) without each corner needing its own offset.
   root.style.cssText = 'position:fixed;inset:56px;pointer-events:none;z-index:6;font-family:monospace;color:#4a9298;text-shadow:0 0 3px rgba(74,146,152,0.5);';
 
+  // On narrow/mobile viewports, drop the more decorative telemetry lines
+  // (JACK POINT, DEPTH, THROUGHPUT, VECTOR) and keep only the fields that
+  // reflect real state (STATUS, ICE STATUS, NEAREST ARRAY) — checked once,
+  // matching the one-time matchMedia pattern used for reduced-motion checks
+  // elsewhere in the project.
+  const compact = matchMedia('(max-width: 600px)').matches;
+
+  // max-width caps each corner at under half the viewport so opposite
+  // corners (tl/tr, bl/br) can never collide — on narrow/mobile viewports
+  // long lines (e.g. "THROUGHPUT 80.3 Tb/s") wrap instead of overflowing
+  // into the other corner's text.
   function corner(cls: string): HTMLElement {
     const el = document.createElement('div');
-    el.style.cssText = `position:absolute;${cls}font-size:10px;letter-spacing:0.12em;line-height:1.6;opacity:0.75;`;
+    el.style.cssText = `position:absolute;${cls}max-width:42vw;font-size:10px;letter-spacing:0.12em;line-height:1.6;opacity:0.75;`;
     root.appendChild(el);
     return el;
   }
@@ -81,9 +92,13 @@ export function makeOverlay(): {
   root.appendChild(crosshair);
 
   function updateHud(f: HudFields): void {
-    tl.innerHTML = `<div>JACK POINT <span style="color:#6fb0b5">${f.jackPoint}</span></div><div>DEPTH <span style="color:#6fb0b5">${f.depth}</span> m</div><div>STATUS <span style="color:#6fb0b5">${f.status}</span></div>`;
-    tr.innerHTML = `<div>THROUGHPUT <span style="color:#6fb0b5">${f.throughput}</span> Tb/s</div><div>ICE STATUS <span style="color:#6fb0b5">${f.iceStatus}</span></div>`;
-    bl.innerHTML = `<div>VECTOR <span style="color:#6fb0b5">${f.vector}</span></div>`;
+    tl.innerHTML = compact
+      ? `<div>STATUS <span style="color:#6fb0b5">${f.status}</span></div>`
+      : `<div>JACK POINT <span style="color:#6fb0b5">${f.jackPoint}</span></div><div>DEPTH <span style="color:#6fb0b5">${f.depth}</span> m</div><div>STATUS <span style="color:#6fb0b5">${f.status}</span></div>`;
+    tr.innerHTML = compact
+      ? `<div>ICE STATUS <span style="color:#6fb0b5">${f.iceStatus}</span></div>`
+      : `<div>THROUGHPUT <span style="color:#6fb0b5">${f.throughput}</span> Tb/s</div><div>ICE STATUS <span style="color:#6fb0b5">${f.iceStatus}</span></div>`;
+    bl.innerHTML = compact ? '' : `<div>VECTOR <span style="color:#6fb0b5">${f.vector}</span></div>`;
     br.innerHTML = `<div>NEAREST ARRAY <span style="color:#6fb0b5">${f.nearest}</span></div>`;
   }
 

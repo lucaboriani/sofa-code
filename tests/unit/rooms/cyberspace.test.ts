@@ -8,6 +8,12 @@ import { sharedState } from '@/lib/rooms/cyberspace/state';
 import { makeFakeAudio, advanceFakeAudio } from '../../fixtures/fake-audio';
 import { createAudio } from '@/lib/rooms/cyberspace/audio';
 
+// jsdom has no matchMedia at all; the overlay's mobile-compact check needs
+// one. `matches: false` simulates a desktop-width viewport.
+vi.stubGlobal('matchMedia', (q: string) => ({
+  matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}
+}));
+
 describe('cyberspace geometry', () => {
   it('buildStructures returns the requested count with valid fields', () => {
     const structures = buildStructures(240);

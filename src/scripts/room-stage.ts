@@ -6,6 +6,7 @@ const isRoomSlug = (s: string): s is RoomSlug => s in rooms;
 
 let activeHandle: RoomHandle | null = null;
 let gestureCleanup: (() => void) | null = null;
+let contextMenuCleanup: (() => void) | null = null;
 
 // iOS Safari ignores `touch-action` for pinch-zoom, so suppress its synthesized
 // gesture events while a room is mounted. Pointer events still fire, so the
@@ -23,10 +24,27 @@ function blockPageZoom(): void {
   };
 }
 
+// A held press on the canvas (rooms with tap-and-hold interactions, e.g.
+// cyberspace's tap-to-lock) otherwise surfaces the browser's native
+// image-style context menu (Android long-press, desktop right-click, and
+// Chrome's touch-emulation long-press all fire this same event — iOS
+// Safari's long-press callout is the separate `-webkit-touch-callout: none`
+// in RoomStage.astro). Scoped to the canvas, not the whole page, so links
+// like the back-to-index button keep their normal context menu.
+function blockCanvasContextMenu(canvas: HTMLCanvasElement): void {
+  const prevent = (e: Event): void => e.preventDefault();
+  canvas.addEventListener('contextmenu', prevent);
+  contextMenuCleanup = () => {
+    canvas.removeEventListener('contextmenu', prevent);
+    contextMenuCleanup = null;
+  };
+}
+
 async function mountCurrent(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>('[data-room-stage]');
   if (!canvas) return;
   blockPageZoom();
+  blockCanvasContextMenu(canvas);
   const slugAttr = canvas.dataset.roomStage ?? '';
   if (!isRoomSlug(slugAttr)) return;
   const slug: RoomSlug = slugAttr;
@@ -56,6 +74,7 @@ function teardownCurrent(): void {
     activeHandle = null;
   }
   gestureCleanup?.();
+  contextMenuCleanup?.();
 }
 
 document.addEventListener('astro:page-load', () => { void mountCurrent(); });

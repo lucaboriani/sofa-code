@@ -21,5 +21,10 @@ const { slug, hasAudio } = Astro.props;
     /* The room drives its own two-finger pinch via pointer events — stop the
        browser from hijacking touches to pan/zoom the page instead. */
     touch-action: none;
+    /* Rooms with a press-and-hold interaction (e.g. cyberspace's tap-to-lock)
+       otherwise trigger iOS Safari's long-press callout (Save Image/Copy) on
+       the canvas — see contextmenu prevention in room-stage.ts for the rest
+       of this (Android/desktop use the contextmenu event, not this). */
+    -webkit-touch-callout: none;
   }
 </style>
