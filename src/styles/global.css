@@ -20,6 +20,17 @@ html:has(body.room-body), body.room-body {
 body.room-body {
   touch-action: none;
 }
+/* Room pages are an immersive app surface, not readable text — a held press
+   anywhere (canvas, HUD overlay text, floating labels, the audio prompt
+   button) shouldn't trigger the browser's native text-selection highlight
+   or iOS's link/image callout. The source sketch had this as a blanket
+   `* { user-select: none; -webkit-touch-callout: none }` rule; scoped here
+   to room pages only so gallery/about text stays normally selectable. */
+body.room-body * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 body::before {
   content: '';

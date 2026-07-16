@@ -47,13 +47,6 @@ const d = entry.data;
     position: fixed; z-index: 5;
     font-family: var(--mono);
     color: var(--text-mid);
-    /* A press-and-hold on the back link or title otherwise triggers the
-       browser's native link callout (iOS) or text-selection highlight
-       (Android/iOS) — this is app chrome, not readable content, so it
-       shouldn't be selectable. Inherited by .room-back/.room-meta/etc. */
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
   }
   .room-chrome-top {
     top: 0; left: 0; right: 0;
@@ -80,9 +73,6 @@ const d = entry.data;
     border: 1px solid var(--border-bright); background: rgba(8,11,16,0.6); backdrop-filter: blur(8px);
     color: var(--text-mid); font-family: var(--mono); font-style: italic;
     cursor: pointer;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
   }
   .room-info-toggle:hover { color: var(--accent); border-color: var(--accent); }
   .room-info-panel {
