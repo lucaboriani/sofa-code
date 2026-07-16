@@ -76,6 +76,12 @@ function makeCanvas(gl: unknown = makeProxyGL()): HTMLCanvasElement {
   const c = document.createElement('canvas');
   Object.defineProperty(c, 'clientWidth', { get: () => 400 });
   Object.defineProperty(c, 'clientHeight', { get: () => 300 });
+  // jsdom's default getBoundingClientRect is a zero-size rect, which makes
+  // ndcFromEvent/onPointerMove's NDC math divide by zero (NaN/±Infinity).
+  // Real geometry is needed to test steering direction meaningfully.
+  c.getBoundingClientRect = () => ({
+    left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() { return this; }
+  });
   (c as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture = () => {};
   c.getContext = ((type: string): unknown => (type === 'webgl' || type === 'webgl2') ? gl : null) as typeof HTMLCanvasElement.prototype.getContext;
   return c;
@@ -208,6 +214,32 @@ describe('cyberspace.mount — picking, lock and filaments', () => {
     expect(sharedState.lockLevel).toBeGreaterThanOrEqual(0);
     canvas.dispatchEvent(pointerEvt('pointerup', 250, 150, 2));
     expect(sharedState.lockLevel).toBe(0);
+    handle.teardown();
+  });
+
+  it('multi-touch: a second locked pointer does not hijack camera steering (no stagger)', async () => {
+    const canvas = makeCanvas();
+    const handle = mount(canvas, { quality: 'full', audio: false });
+    const overlay = document.querySelector('[data-cyberspace-overlay]')!;
+    const readYaw = (): number => Number(overlay.textContent!.match(/VECTOR (-?[\d.]+)/)![1]);
+
+    // Pointer 1 locks an object and steers toward the right edge — targetYaw
+    // goes strongly negative.
+    canvas.dispatchEvent(pointerEvt('pointerdown', 350, 150, 1));
+    canvas.dispatchEvent(pointerEvt('pointermove', 350, 150, 1));
+    await new Promise(r => setTimeout(r, 50));
+    const yawAfterFirst = readYaw();
+    expect(yawAfterFirst).toBeLessThan(0);
+
+    // Pointer 2 locks a second object on the opposite side and moves there —
+    // this is the dual-lock scenario (bridge filament). It must not steer
+    // the camera toward its own (opposite-sign) position.
+    canvas.dispatchEvent(pointerEvt('pointerdown', 50, 150, 2));
+    canvas.dispatchEvent(pointerEvt('pointermove', 50, 150, 2));
+    await new Promise(r => setTimeout(r, 50));
+    const yawAfterSecond = readYaw();
+
+    expect(yawAfterSecond).toBeLessThanOrEqual(yawAfterFirst);
     handle.teardown();
   });
 });

@@ -380,6 +380,14 @@ export const mount: RoomMount = (canvas, opts) => {
     const DOUBLE_TAP_MS = 300;
     const DOUBLE_TAP_PX = 40;
     let lastTapTime = -Infinity, lastTapX = 0, lastTapY = 0;
+    // While two objects are locked (dual-lock/bridge filament), both fingers
+    // are down simultaneously and each fires its own pointermove — without
+    // this, whichever finger's move event lands last would overwrite
+    // targetYaw/targetPitch, making the camera aim stagger between the two
+    // touch positions. Only the first pointer to move claims steering; the
+    // claim is released when that pointer lifts, letting another already-
+    // down finger (or a fresh touch) take over.
+    let steeringPointerId: number | null = null;
     const onPointerDown = (e: PointerEvent): void => {
       const isDoubleTap = e.timeStamp - lastTapTime < DOUBLE_TAP_MS &&
         Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < DOUBLE_TAP_PX;
@@ -399,11 +407,14 @@ export const mount: RoomMount = (canvas, opts) => {
     };
     const onPointerUp = (e: PointerEvent): void => {
       pointerLocks.delete(e.pointerId);
+      if (e.pointerId === steeringPointerId) steeringPointerId = null;
       const locked = uniqueLockedIds();
       targetSpeed = locked.length ? 0 : BASE_SPEED;
       sharedState.lockLevel = Math.min(locked.length, 2) as 0 | 1 | 2;
     };
     const onPointerMove = (e: PointerEvent): void => {
+      if (steeringPointerId === null) steeringPointerId = e.pointerId;
+      if (e.pointerId !== steeringPointerId) return;
       const r = canvas.getBoundingClientRect();
       const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
       const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
