@@ -227,12 +227,19 @@ export const mount: RoomMount = (canvas, opts) => {
   }
 
   // ── Resize ──────────────────────────────────────────────────────────────────
-  let RW = 1, RH = 1;
-  const stopResize = observeResize(canvas, () => {
+  // RW/RH are device pixels (canvas.width/height, DPR-scaled) — used for the
+  // GL viewport and the projection aspect ratio, where DPR cancels out. CW/CH
+  // are CSS pixels (canvas.clientWidth/height) — worldToScreen must project
+  // into this space since the floater elements are positioned with CSS
+  // transforms, matching the source's use of window.innerWidth/innerHeight.
+  let RW = 1, RH = 1, CW = 1, CH = 1;
+  const stopResize = observeResize(canvas, (cssW, cssH) => {
     RW = canvas.width; RH = canvas.height;
+    CW = cssW; CH = cssH;
     gl.viewport(0, 0, RW, RH);
   });
   RW = canvas.width || 1; RH = canvas.height || 1;
+  CW = canvas.clientWidth || 1; CH = canvas.clientHeight || 1;
 
   // ── Filament pool (16 short polylines bridging/flickering from locked objects) ──
   const FILAMENT_COUNT = 16;
@@ -442,7 +449,7 @@ export const mount: RoomMount = (canvas, opts) => {
       if (id === undefined) { overlay.updateFloater(g as 0 | 1, null, dt); continue; }
       const pos = targetPos(id);
       const name = id === CORE_ID ? 'CORE ARRAY' : structures[id].name;
-      const sp = worldToScreen(mvp, pos, RW, RH);
+      const sp = worldToScreen(mvp, pos, CW, CH);
       const target: FloaterTarget = { name, isCore: id === CORE_ID, x: sp.x, y: sp.y, visible: !sp.behindCamera };
       overlay.updateFloater(g as 0 | 1, target, dt);
     }

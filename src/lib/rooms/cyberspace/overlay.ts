@@ -48,7 +48,10 @@ export function makeOverlay(): {
 } {
   const root = document.createElement('div');
   root.setAttribute('data-cyberspace-overlay', '');
-  root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:6;font-family:monospace;color:#4a9298;text-shadow:0 0 3px rgba(74,146,152,0.5);';
+  // inset 56px (not 0) so every absolutely-positioned child below sits clear
+  // of the room page's own chrome (back link + title top, info toggle
+  // bottom-right) without each corner needing its own offset.
+  root.style.cssText = 'position:fixed;inset:56px;pointer-events:none;z-index:6;font-family:monospace;color:#4a9298;text-shadow:0 0 3px rgba(74,146,152,0.5);';
 
   function corner(cls: string): HTMLElement {
     const el = document.createElement('div');

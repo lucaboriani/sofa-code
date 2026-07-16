@@ -31,8 +31,8 @@ export const FS_LINE = `
   varying float vFogW;
   void main(){
     float fog = 1.0 - clamp(exp(-uFogDensity * uFogDensity * vFogW * vFogW), 0.0, 1.0);
-    vec3 col = mix(vColor, uFogColor, fog);
-    gl_FragColor = vec4(col * vAlpha, vAlpha);
+    vec3 col = mix(vColor * 1.25, uFogColor, fog);
+    gl_FragColor = vec4(col, vAlpha);
   }
 `;
 
@@ -63,8 +63,8 @@ export const FS_PT = `
     float r = length(d) * 2.0;
     float edge = 1.0 - smoothstep(0.3, 1.0, r);
     float fog = 1.0 - clamp(exp(-uFogDensity * uFogDensity * vFogW * vFogW), 0.0, 1.0);
-    vec3 col = mix(uColor, uFogColor, fog);
+    vec3 col = mix(uColor * 1.25, uFogColor, fog);
     float a = edge * vAlpha;
-    gl_FragColor = vec4(col * a, a);
+    gl_FragColor = vec4(col, a);
   }
 `;
